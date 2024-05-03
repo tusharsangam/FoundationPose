@@ -146,14 +146,17 @@ def generate_point_cloud(
 
     print(f"3D point cloud shape {points_3D.shape}")
     colors = image[rows, cols].reshape(-1, 3) / 255.0
-    colors = colors[valid_depth_indices]
+    colors = colors[valid_depth_indices][..., ::-1]
     points_3D[:, 1] *= -1.0
     points_3D[:, -1]*= -1.0
     #plot_pointcloud(points_3D, "tgt_pointcloud")
-    # point_cloud = o3d.geometry.PointCloud()
-    # point_cloud.points = o3d.utility.Vector3dVector(points_3D)
-    # point_cloud.colors = o3d.utility.Vector3dVector(colors)
-    # o3d.io.write_point_cloud("tgt.ply", point_cloud)
+    point_cloud = o3d.geometry.PointCloud()
+    point_cloud.points = o3d.utility.Vector3dVector(points_3D)
+    point_cloud.colors = o3d.utility.Vector3dVector(colors)
+    point_cloud, ind = point_cloud.remove_radius_outlier(nb_points=5, radius=0.05)
+    point_cloud, ind = point_cloud.remove_statistical_outlier(nb_neighbors=5, std_ratio=2.0)
+    o3d.io.write_point_cloud("tgt.ply", point_cloud)
+    points_3D = np.array(point_cloud.points)
     points_3D = farthest_point_sampling(points_3D, 5000)
     return points_3D
 
@@ -173,8 +176,9 @@ def read_data(depth_path, object_mask_path, rgb_image_path, fx, fy, px, py):
 
     # Format as (x1, y1, x2, y2)
     rgb_image = cv2.imread(rgb_image_path)
-    rgb_image = rgb_image*object_mask.astype(rgb_image.dtype)
-    rgb_image = np.where(rgb_image == 0, 255, rgb_image).astype(np.uint8)
+    rgb_image = rgb_image*(object_mask).astype(rgb_image.dtype) #object mask is 0-1
+    rgb_image[object_mask[..., 0] == 0.] = [255, 255, 255]
+    #rgb_image = np.where(rgb_image == 0, 255, rgb_image).astype(np.uint8)
     #rgb_image_with_bbox = cv2.rectangle(rgb_image.copy(), (int(x_min), int(y_min)), (int(x_max), int(y_max)), (255, 0, 0), 2)
     #cv2.imwrite("rgb_image_with_bbox.png", rgb_image)
     rgb_image = rgb_image.astype(np.float32)/255.
@@ -197,40 +201,74 @@ def read_data(depth_path, object_mask_path, rgb_image_path, fx, fy, px, py):
 
     return camera_point_in_center_frame_in_gl_system.reshape(1, 3).tolist(), rgb_image, object_mask[..., 0], points_3d
 
+def fill_holes(obje_file_path):
+    import trimesh
+    mesh = trimesh.load(obje_file_path)
+    mesh.fill_holes()
+    mesh.export(obje_file_path)
 
 from pytorch3d.transforms import euler_angles_to_matrix
 class MeshTransformer(torch.nn.Module):
-    def __init__(self, meshes, renderer, cameras, lights, image_ref):
+    def __init__(self, meshes, renderer_silhoutte, rgb_renderer, cameras, lights, image_ref, cam_eye):
         super().__init__()
         self.meshes = meshes
         self.device = meshes.device
-        self.renderer = renderer
+        self.renderer_silhoutte = renderer_silhoutte
+        self.renderer_rgb = rgb_renderer
         self.cameras = cameras
         self.lights = lights
         
         # Get the silhouette of the reference RGB image by finding all non-white pixel values. 
-        image_ref = torch.from_numpy((image_ref[..., :3].max(-1) != 1).astype(np.float32))
-        self.register_buffer('image_ref', image_ref)
-    
+        image_ref_torch = torch.from_numpy((image_ref.copy()[..., :3].max(-1) != 1).astype(np.float32))
+        self.register_buffer('image_ref', image_ref_torch)
+
+        
+        image_ref_rgb_torch = torch.from_numpy(image_ref.copy()[..., :3][..., ::-1].astype(np.float32))
+        self.register_buffer('image_ref_rgb', image_ref_rgb_torch)
+
+        cv2.imwrite("target_image_rgb.png", (image_ref*255.).astype(np.uint8))
        
         self.scale = torch.nn.Parameter(torch.tensor([1.0]).to(self.meshes.device), requires_grad=True)
         self.translate = torch.nn.Parameter(torch.tensor([[0.0, 0.0, 0.0]]).to(self.meshes.device), requires_grad=True)
-        self.rotate = torch.nn.Parameter(torch.eye(3).reshape(1, 3, 3).to(self.meshes.device), requires_grad=True)
+        self.rotate = torch.nn.Parameter(torch.tensor([[0., 0., 0.]]).to(self.meshes.device), requires_grad=True)
+        #self.rotate = torch.nn.Parameter(torch.eye(3).reshape(1, 3, 3).to(self.meshes.device), requires_grad=True)
+    
+        self.initial_correction_transformation(cam_eye)
+    
+    def initial_correction_transformation(self, cam_eye):
+        print(cam_eye)
+        #Orient the object upside down to reduce rotation parameter stress
+        # angles = np.deg2rad([90, 0, 0])
+        # initial_rotation = euler_angles_to_matrix(torch.from_numpy(angles).reshape(1, 3), "XYZ").to(self.meshes.device)
+        # transformed_verts = Transform3d().rotate(initial_rotation).to(self.meshes.device).transform_points(self.meshes.verts_padded())
+        # self.meshes = self.meshes.update_padded(transformed_verts)
         
+        # angles = np.deg2rad([0, 180, 0])
+        # initial_rotation = euler_angles_to_matrix(torch.from_numpy(angles).reshape(1, 3), "XYZ").to(self.meshes.device)
+        # transformed_verts = Transform3d().rotate(initial_rotation).to(self.meshes.device).transform_points(self.meshes.verts_padded())
+        # self.meshes = self.meshes.update_padded(transformed_verts)
+        
+        #transformed_verts = Transform3d().translate(-1.*torch.tensor(cam_eye).to(self.meshes.device)).to(self.meshes.device).transform_points(self.meshes.verts_padded())
+        #self.meshes = self.meshes.update_padded(transformed_verts)
 
-        angles = np.deg2rad([90, 0, 0])
+        angles = np.deg2rad([0, 45, 0])
         initial_rotation = euler_angles_to_matrix(torch.from_numpy(angles).reshape(1, 3), "XYZ").to(self.meshes.device)
         transformed_verts = Transform3d().rotate(initial_rotation).to(self.meshes.device).transform_points(self.meshes.verts_padded())
         self.meshes = self.meshes.update_padded(transformed_verts)
+
+    
     def forward(self):
         
         # Render the image using the updated camera position. Based on the new position of the 
         # camera we calculate the rotation and translation matrices
         #transform3d = Transform3d(matrix=self.transformation_matrix, device=self.meshes.device
         meshes = self.meshes.clone()
-        transformed_verts = Transform3d().rotate(self.rotate).translate(self.translate).scale(self.scale).to(self.meshes.device).transform_points(meshes.verts_padded())
+        rotation_mat = euler_angles_to_matrix(torch.deg2rad(self.rotate), "XYZ").to(self.meshes.device)
+        #transformed_verts = Transform3d().rotate(rotation_mat).translate(self.translate).scale(self.scale).to(self.meshes.device).transform_points(meshes.verts_padded())
+        transformed_verts = Transform3d().translate(self.translate).scale(self.scale).to(self.meshes.device).transform_points(meshes.verts_padded())
         meshes = meshes.update_padded(transformed_verts)
-        image = self.renderer(meshes_world=meshes, cameras=self.cameras, lights=self.lights)
+        image_sil = self.renderer_silhoutte(meshes_world=meshes, cameras=self.cameras, lights=self.lights)
+        image_rgb = self.renderer_rgb(meshes_world=meshes, cameras=self.cameras, lights=self.lights)
         #print(self.translate, self.scale)
         
-        return image, meshes
+        return image_sil, image_rgb, meshes

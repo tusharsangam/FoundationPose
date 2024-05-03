@@ -17,6 +17,7 @@ from pytorch3d.renderer import (
     SoftPhongShader,
     SoftSilhouetteShader,
     SoftPhongShader,
+    BlendParams
 )
 from pytorch3d.loss import (
     chamfer_distance, 
@@ -30,9 +31,10 @@ import sys
 import os, imageio
 from skimage import img_as_ubyte
 sys.path.append(os.path.abspath(''))
-from utils import  read_data, MeshTransformer
+from utils import  read_data, MeshTransformer, fill_holes
 import os.path as osp, numpy as np, cv2
-
+from pytorch_msssim import MS_SSIM
+import atexit
 
 # Setup
 if torch.cuda.is_available():
@@ -43,7 +45,7 @@ else:
 
 # Assuming camera intrinsics matrix 'K' and pose matrix 'pose' are given
 # Example camera intrinsics and pose (adjust according to your data)
-root_folder_path = "../demo_data/bottlevideocloser"
+root_folder_path = "../demo_data/cup_close"
 intrinsic_path = osp.join(root_folder_path, "cam_K.txt")
 
 K_3x3 = np.loadtxt(intrinsic_path)  # fx, fy, cx, cy should be provided
@@ -69,7 +71,7 @@ print("Camera Intrinsics", fx, fy, px, py)
 obj_filename = os.path.join(root_folder_path, "mesh/mesh.obj")
 
 # Load obj file
-
+#fill_holes(obj_filename)
 #mesh = load_objs_as_meshes(["data/cow_mesh/cow.obj"], device=device)
 mesh:Meshes= load_objs_as_meshes([obj_filename], device=device)
 
@@ -83,25 +85,47 @@ N = verts.shape[0]
 center = verts.mean(0)
 scale = max((verts - center).abs().max(0)[0])
 mesh.offset_verts_(-center)
-print(f"Scale {(1.0/float(scale))}")
 # mesh.scale_verts_((1.0 / float(scale)))
 
 # the number of different viewpoints from which we want to render the mesh.
 num_views = 1
-
-# Get a batch of viewing angles. 
-elev = torch.linspace(0, 360, num_views)
-azim = torch.linspace(-180, 180, num_views)
-
-# Place a point light in front of the object. As mentioned above, the front of 
-# the cow is facing the -z direction. 
+ 
 lights = PointLights(device=device, location=[[0.0, 0.0, 0.0]])
 
-# Initialize an OpenGL perspective camera that represents a batch of different 
-# viewing angles. All the cameras helper methods support mixed type inputs and 
-# broadcasting. So we can view the camera from the a distance of dist=2.7, and 
-# then specify elevation and azimuth angles for each viewpoint as tensors. 
-R, T = look_at_view_transform(eye=eye_in_gl)#look_at_view_transform(dist=2.7, elev=elev, azim=azim)
+
+
+def compute_elevation_azimuth(x, y, z):
+    """
+    Compute the elevation and azimuth of a vector given its x, y, z components.
+    
+    Args:
+    x (float): X component of the vector.
+    y (float): Y component of the vector.
+    z (float): Z component of the vector.
+    
+    Returns:
+    tuple: (elevation, azimuth) in degrees.
+    """
+    # Convert to PyTorch tensors
+    x, y, z = map(torch.tensor, (x, y, z))
+    
+    # Calculate the radius
+    r = torch.sqrt(x**2 + y**2 + z**2)
+    
+    # Elevation
+    elevation = torch.asin(z / r)
+    
+    # Azimuth
+    azimuth = torch.atan2(y, x)
+    
+    # Convert from radians to degrees
+    elevation_deg = torch.rad2deg(elevation)
+    azimuth_deg = torch.rad2deg(azimuth)
+    
+    return elevation_deg.item(), azimuth_deg.item()
+elev, azim = compute_elevation_azimuth(*eye_in_gl[0])
+#R, T = look_at_view_transform(eye=eye_in_gl)
+R, T = look_at_view_transform(dist=eye_in_gl[0][-1], elev=elev, azim=azim, degrees=True)
 cameras = PerspectiveCameras(
                              device=device, R=R, T=T, 
                              focal_length=torch.tensor([[fx, fy]]).to(torch.float32), 
@@ -109,11 +133,6 @@ cameras = PerspectiveCameras(
                              image_size=torch.tensor([[480, 640]]), 
                              in_ndc=False
                              )
-
-# We arbitrarily choose one particular view that will be used to visualize 
-# results
-#camera = PerspectiveCameras(device=device, R=R, T=T, focal_length=torch.tensor([[fx, fy]]), principal_point=torch.tensor([[px, py]]), image_size=torch.tensor([[480, 640]]))
- 
 
 raster_settings = RasterizationSettings(
     image_size=(480, 640), 
@@ -135,7 +154,8 @@ renderer = MeshRenderer(
     shader=SoftPhongShader(
         device=device, 
         cameras=cameras,
-        lights=lights
+        lights=lights,
+        #blend_params=BlendParams(background_color=(0, 0, 0))
     )
 )
 renderer_silhouette = MeshRenderer(
@@ -148,54 +168,80 @@ renderer_silhouette = MeshRenderer(
 meshes = mesh.extend(num_views)
 meshes.requires_grad = False
 
-# Render the cow mesh from each viewing angle
-#R=to_origin[:3, :3].reshape(1, 3, 3), T=to_origin[:3, 3].reshape(1, 3)
-rendered_images = renderer(meshes, cameras=cameras, lights=lights)
 
-# meshes_transformed_random = meshes.clone().to(device)
-# angles = np.deg2rad([90, 0, 0])
-# initial_rotation = euler_angles_to_matrix(torch.from_numpy(angles).reshape(1, 3), "XYZ").to(device)
-# random_tranform = Transform3d().rotate(initial_rotation).translate(torch.tensor([[0.05, 0.0, 0.0]]).to(device)).to(device)
-# meshes_transformed_random = meshes_transformed_random.update_padded(random_tranform.transform_points(meshes_transformed_random.verts_padded()))
-# rendered_silhoutte = renderer_silhouette(meshes_transformed_random, cameras=cameras, lights=lights)
-# rendered_silhoutte = rendered_silhoutte[0, ..., 3]
+def close_writers():
+    global writer_sil
+    global writer_rgb
+    writer_sil.close()
+    writer_rgb.close()
 
-#cv2.imwrite("silhoutte.png", (rendered_silhoutte.data.cpu().numpy()*255.).astype(np.uint8))
-#target_rgb = cv2.imread("silhoutte.png")
+atexit.register(close_writers)
 
 
+transformer = MeshTransformer(meshes, renderer_silhouette, renderer, cameras, lights, target_rgb, eye_in_gl).to(device)
+optimizer = torch.optim.Adam(transformer.parameters(), lr=0.005) #best 0.005
+#scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=300, gamma=0.1, verbose=True)
 
-transformer = MeshTransformer(meshes, renderer_silhouette, cameras, lights, target_rgb).to(device)
+ms_ssim_rgb = MS_SSIM(data_range=1., channel=3, size_average=True)
+ms_ssim_silhoutte = MS_SSIM(data_range=1., channel=1, size_average=True)
 
-#BGR to RGB
-optimizer = torch.optim.Adam(transformer.parameters(), lr=0.005)
-filename_output = "./optimization.gif"
-writer = imageio.get_writer(filename_output, mode='I', duration=0.3)
+writer_sil = imageio.get_writer("./optimization_sil.gif", mode='I', duration=0.3)
+writer_rgb = imageio.get_writer("./optimization_rgb.gif", mode='I', duration=0.3)
+
 tgt_point_cloud = torch.from_numpy(tgt_point_cloud).to(torch.float32).to(device).reshape(1, -1, 3)
 min_loss, good_scale = torch.inf, 1.0
 num_iterations = 1000
+
+text_orig = (50, 50)
+target_rgb_show = (target_rgb.copy()*255.).astype(np.uint8)
+target_rgb_show_ = cv2.putText(target_rgb_show.copy(), "Real Target view", text_orig, cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 4, cv2.LINE_AA)
+cv2.namedWindow("Training")
+
 with tqdm(total=num_iterations) as pbar:
     for i in range(num_iterations):  # Example number of iterations
         optimizer.zero_grad()
         
         # Apply transformation and render
-        rendered_images, meshes_transformed = transformer()
-        loss = torch.sum((rendered_images[0, ..., 3] - transformer.image_ref) ** 2)
-        chamfer_loss, _ = chamfer_distance(sample_points_from_meshes(meshes_transformed, 5000), tgt_point_cloud)
-        loss += chamfer_loss
+        rendered_images_sil, rendered_images_rgb, meshes_transformed = transformer()
+    
+        loss = 0.0
+        
+        loss += torch.sum((rendered_images_sil[0, ..., 3] - transformer.image_ref) ** 2)
+        loss += torch.sum((rendered_images_rgb[0, ..., :3] - transformer.image_ref_rgb) ** 2)
+        loss += chamfer_distance(sample_points_from_meshes(meshes_transformed, 5000), tgt_point_cloud)[0]
+        loss += 1. - ms_ssim_silhoutte(rendered_images_sil[..., 3].unsqueeze(-1).permute(0, 3, 1, 2), transformer.image_ref.unsqueeze(0).unsqueeze(-1).permute(0, 3, 1, 2)) 
+        loss += 1. - ms_ssim_rgb(rendered_images_rgb[..., :3].permute(0, 3, 1, 2), transformer.image_ref_rgb.unsqueeze(0).permute(0, 3, 1, 2)) 
+        
         
         # Compute loss and perform backpropagation
         loss.backward(retain_graph=True)
         optimizer.step()
-        pbar.set_description(f"Processing iteration {i + 1}, loss {loss.item()}, scale {transformer.scale.item()}")
-        #print(f"Loss: {loss.item()}")
+        #scheduler.step()
+        
         if loss.item() < min_loss:
             min_loss = loss.item()
             good_scale = transformer.scale.item()
-        image = rendered_images[0, ..., 3].detach().squeeze().cpu().numpy()
-        image = img_as_ubyte(image)
-        writer.append_data(image)
+        
+        
+        image_sil = img_as_ubyte(rendered_images_sil[0, ..., 3].detach().squeeze().cpu().numpy())
+        image = img_as_ubyte(rendered_images_rgb[0, ..., :3].detach().squeeze().cpu().numpy())
+        
+        image_ = cv2.putText(image.copy(), f"Rendering at t={i}, scale {transformer.scale.item():.2f}", text_orig, cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 4, cv2.LINE_AA)
+        overlaid_image = np.clip(image[..., ::-1]+target_rgb_show, 0, 255).astype(np.uint8)
+        overlaid_image = cv2.putText(overlaid_image, "Real+Rendering", text_orig, cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 4, cv2.LINE_AA)
+        image_show = np.hstack([image_[..., ::-1], target_rgb_show_, overlaid_image])
+        writer_sil.append_data(image_sil)
+        writer_rgb.append_data(image_show[..., ::-1])
+        cv2.imshow("Training", image_show)
+        cv2.waitKey(1)
+        
+        pbar.set_description(f"Processing iteration {i + 1}, loss {loss.item()}, scale {transformer.scale.item()}")
         pbar.update(1)
-writer.close()
-cv2.imwrite("render.png", image)
+        #break
+cv2.imwrite("render.png", image[..., ::-1])
+cv2.destroyAllWindows()
 print(f"Min loss {min_loss}, scale {good_scale}")
+
+writer_sil.close()
+writer_rgb.close()
+
