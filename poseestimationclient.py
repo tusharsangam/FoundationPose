@@ -56,7 +56,7 @@ def load_model(model_name="owlvit", device="cpu"):
         print("Loading SAM")
         sam = SamPredictor(
             build_sam(
-                checkpoint="/home/tusharsangam/Desktop/spot-sim2real/spot_rl_experiments/weights/sam_vit_h_4b8939.pth"
+                checkpoint="/home/tushar/Desktop/spot-sim2real/spot_rl_experiments/weights/sam_vit_h_4b8939.pth"
             ).to(device)
         )
 
@@ -129,6 +129,19 @@ def segment(image, boxes, size, device):
     )
     return masks
 
+def get_mask(rgb_image:np.ndarray, bbox:list, object_name:str, device:str="cuda")->np.ndarray:
+    h, w, _ = rgb_image.shape
+    if bbox is None:
+        label = detect(rgb_image, object_name, 0.01, device)
+        print("prediction label", label)
+        bbox = label[0][0]  # Example bounding box
+    x1, y1, x2, y2 = bbox
+    masks = segment(rgb_image, np.array([[x1, y1, x2, y2]]), [h, w], device)
+    mask = masks[0, 0].cpu().numpy()
+    h, w = mask.shape
+    mask_image = np.dstack([mask, mask, mask]).reshape(h, w, 3).astype(np.uint8)*255
+    return mask_image
+
 def pose_estimation(
     rgb_image:np.ndarray, depth_raw:np.ndarray, bbox:list, object_name:str, cam_intrinsics:Intrinsics, device:str="cuda"
 ) -> None:
@@ -149,17 +162,9 @@ def pose_estimation(
         rgb_image = cv2.resize(rgb_image, (640, 480))
         if depth_raw is not None:
             depth_raw = cv2.resize(depth_raw, (640, 480))
-    h, w, _ = rgb_image.shape
+    
 
-    if bbox is None:
-        label = detect(rgb_image, object_name, 0.01, device)
-        print("prediction label", label)
-        bbox = label[0][0]  # Example bounding box
-    x1, y1, x2, y2 = bbox
-    masks = segment(rgb_image, np.array([[x1, y1, x2, y2]]), [h, w], device)
-    mask = masks[0, 0].cpu().numpy()
-    h, w = mask.shape
-    mask_image = np.dstack([mask, mask, mask]).reshape(h, w, 3).astype(np.uint8)*255
+    mask_image = get_mask(rgb_image, bbox, object_name, device)
 
     cv2.imwrite("masked_image.png", mask_image)
     est_refine_iter = 5
@@ -179,20 +184,47 @@ def pose_estimation(
 
 if __name__ == "__main__":
     import os.path as osp
+    from tqdm import tqdm
+    from perception_and_utils.utils.generic_utils import map_user_input_to_boolean
     #load static data
-    data_root_path = "/fsx-siro/sangamtushar/FoundationPose/demo_data/bottleleft"
+    #data_root_path = "/fsx-siro/sangamtushar/FoundationPose/demo_data/bottleposevideo"
+    data_root_path = "/home/tushar/Desktop/FoundationPoseForSpotSim2Real/demo_data/bottle_anchor_scan_intel"
     intrinsics = [
         383.2665100097656,
         383.2665100097656,
         324.305419921875,
         236.64828491210938,
     ]
-    rgb_path = osp.join(data_root_path, "rgb", "001.png") 
-    depth_path = osp.join(data_root_path, "depth", "001.png")
-    rgb = cv2.imread(rgb_path)
-    depth = cv2.imread(depth_path)
+    # rgb_path = osp.join(data_root_path, "rgb", "001.png") 
+    # depth_path = osp.join(data_root_path, "depth", "001.png")
+    # rgb = cv2.imread(rgb_path)
+    # depth = cv2.imread(depth_path)
     camera_intrinsics:Intrinsics = Intrinsics(*intrinsics)
-    pose_estimation(rgb, depth, None, "bottle", camera_intrinsics, "cuda")
+    
+    rgb_filenames = os.listdir(osp.join(data_root_path, "rgb"))
+    rgb_filenames.sort()
+    #print(rgb_filenames)
+    for rgb_file_name in tqdm(rgb_filenames, desc="Generating mask..", total=len(rgb_filenames)):
+        print(osp.join(data_root_path, "rgb", rgb_file_name))
+        rgb_image = cv2.imread(osp.join(data_root_path, "rgb", rgb_file_name))
+        mask_image_file_name = osp.join(data_root_path, "masks", rgb_file_name)
+        try:
+            mask_image = get_mask(rgb_image, None, "bottle", "cuda")
+            cv2.imshow("Mask", mask_image)
+            cv2.waitKey(1)
+            save_or_not = map_user_input_to_boolean("Save this image ?")
+            if save_or_not:
+                cv2.imwrite(mask_image_file_name, mask_image)
+            else:
+                raise Exception("Don't save the image object not clear")
+        except Exception as e:
+            print(f"Error occured {e}")
+            os.unlink(osp.join(data_root_path, "rgb", rgb_file_name))
+            os.unlink(osp.join(data_root_path, "depth", rgb_file_name))
+    cv2.destroyAllWindows()
+        
+    
+    #pose_estimation(rgb, depth, None, "bottle", camera_intrinsics, "cuda")
 
     #Otherwise do it using spot
     #from spot_wrapper.spot import Spot, SpotCamIds, image_response_to_cv2
