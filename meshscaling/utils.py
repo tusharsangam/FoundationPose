@@ -207,7 +207,7 @@ def fill_holes(obje_file_path):
     mesh.fill_holes()
     mesh.export(obje_file_path)
 
-from pytorch3d.transforms import euler_angles_to_matrix
+from pytorch3d.transforms import euler_angles_to_matrix, matrix_to_rotation_6d, rotation_6d_to_matrix
 class MeshTransformer(torch.nn.Module):
     def __init__(self, meshes, renderer_silhoutte, rgb_renderer, cameras, lights, image_ref, cam_eye):
         super().__init__()
@@ -230,13 +230,15 @@ class MeshTransformer(torch.nn.Module):
        
         self.scale = torch.nn.Parameter(torch.tensor([1.0]).to(self.meshes.device), requires_grad=True)
         self.translate = torch.nn.Parameter(torch.tensor([[0.0, 0.0, 0.0]]).to(self.meshes.device), requires_grad=True)
-        self.rotate = torch.nn.Parameter(torch.tensor([[0., 0., 0.]]).to(self.meshes.device), requires_grad=True)
+        self.rotate_6d = matrix_to_rotation_6d(torch.eye(3).reshape(1, 3, 3))
+        self.rotate_6d = torch.nn.Parameter(self.rotate_6d.to(self.meshes.device), requires_grad=True)
+        #self.rotate = torch.nn.Parameter(torch.tensor([[0., 0., 0.]]).to(self.meshes.device), requires_grad=True)
         #self.rotate = torch.nn.Parameter(torch.eye(3).reshape(1, 3, 3).to(self.meshes.device), requires_grad=True)
     
         self.initial_correction_transformation(cam_eye)
     
     def initial_correction_transformation(self, cam_eye):
-        print(cam_eye)
+        
         #Orient the object upside down to reduce rotation parameter stress
         # angles = np.deg2rad([90, 0, 0])
         # initial_rotation = euler_angles_to_matrix(torch.from_numpy(angles).reshape(1, 3), "XYZ").to(self.meshes.device)
@@ -251,7 +253,7 @@ class MeshTransformer(torch.nn.Module):
         #transformed_verts = Transform3d().translate(-1.*torch.tensor(cam_eye).to(self.meshes.device)).to(self.meshes.device).transform_points(self.meshes.verts_padded())
         #self.meshes = self.meshes.update_padded(transformed_verts)
 
-        angles = np.deg2rad([0, 45, 0])
+        angles = np.deg2rad([0, 50, 0])
         initial_rotation = euler_angles_to_matrix(torch.from_numpy(angles).reshape(1, 3), "XYZ").to(self.meshes.device)
         transformed_verts = Transform3d().rotate(initial_rotation).to(self.meshes.device).transform_points(self.meshes.verts_padded())
         self.meshes = self.meshes.update_padded(transformed_verts)
@@ -263,9 +265,9 @@ class MeshTransformer(torch.nn.Module):
         # camera we calculate the rotation and translation matrices
         #transform3d = Transform3d(matrix=self.transformation_matrix, device=self.meshes.device
         meshes = self.meshes.clone()
-        rotation_mat = euler_angles_to_matrix(torch.deg2rad(self.rotate), "XYZ").to(self.meshes.device)
-        #transformed_verts = Transform3d().rotate(rotation_mat).translate(self.translate).scale(self.scale).to(self.meshes.device).transform_points(meshes.verts_padded())
-        transformed_verts = Transform3d().translate(self.translate).scale(self.scale).to(self.meshes.device).transform_points(meshes.verts_padded())
+        rotation_mat = rotation_6d_to_matrix(self.rotate_6d).to(self.meshes.device)
+        transformed_verts = Transform3d().rotate(rotation_mat).translate(self.translate).scale(self.scale).to(self.meshes.device).transform_points(meshes.verts_padded())
+        #transformed_verts = Transform3d().translate(self.translate).scale(self.scale).to(self.meshes.device).transform_points(meshes.verts_padded())
         meshes = meshes.update_padded(transformed_verts)
         image_sil = self.renderer_silhoutte(meshes_world=meshes, cameras=self.cameras, lights=self.lights)
         image_rgb = self.renderer_rgb(meshes_world=meshes, cameras=self.cameras, lights=self.lights)

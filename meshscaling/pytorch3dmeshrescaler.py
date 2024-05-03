@@ -34,6 +34,7 @@ sys.path.append(os.path.abspath(''))
 from utils import  read_data, MeshTransformer, fill_holes
 import os.path as osp, numpy as np, cv2
 from pytorch_msssim import MS_SSIM
+from torch.optim.swa_utils import AveragedModel, SWALR
 import atexit
 
 # Setup
@@ -45,7 +46,7 @@ else:
 
 # Assuming camera intrinsics matrix 'K' and pose matrix 'pose' are given
 # Example camera intrinsics and pose (adjust according to your data)
-root_folder_path = "../demo_data/cup_close"
+root_folder_path = "../demo_data/bottlevideocloser"
 intrinsic_path = osp.join(root_folder_path, "cam_K.txt")
 
 K_3x3 = np.loadtxt(intrinsic_path)  # fx, fy, cx, cy should be provided
@@ -124,6 +125,7 @@ def compute_elevation_azimuth(x, y, z):
     
     return elevation_deg.item(), azimuth_deg.item()
 elev, azim = compute_elevation_azimuth(*eye_in_gl[0])
+print(elev, azim)
 #R, T = look_at_view_transform(eye=eye_in_gl)
 R, T = look_at_view_transform(dist=eye_in_gl[0][-1], elev=elev, azim=azim, degrees=True)
 cameras = PerspectiveCameras(
@@ -180,7 +182,7 @@ atexit.register(close_writers)
 
 transformer = MeshTransformer(meshes, renderer_silhouette, renderer, cameras, lights, target_rgb, eye_in_gl).to(device)
 optimizer = torch.optim.Adam(transformer.parameters(), lr=0.005) #best 0.005
-#scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=300, gamma=0.1, verbose=True)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=300, gamma=0.1, verbose=False)
 
 ms_ssim_rgb = MS_SSIM(data_range=1., channel=3, size_average=True)
 ms_ssim_silhoutte = MS_SSIM(data_range=1., channel=1, size_average=True)
@@ -190,12 +192,12 @@ writer_rgb = imageio.get_writer("./optimization_rgb.gif", mode='I', duration=0.3
 
 tgt_point_cloud = torch.from_numpy(tgt_point_cloud).to(torch.float32).to(device).reshape(1, -1, 3)
 min_loss, good_scale = torch.inf, 1.0
-num_iterations = 1000
+num_iterations = 800
 
 text_orig = (50, 50)
 target_rgb_show = (target_rgb.copy()*255.).astype(np.uint8)
 target_rgb_show_ = cv2.putText(target_rgb_show.copy(), "Real Target view", text_orig, cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 4, cv2.LINE_AA)
-cv2.namedWindow("Training")
+#cv2.namedWindow("Training")
 
 with tqdm(total=num_iterations) as pbar:
     for i in range(num_iterations):  # Example number of iterations
@@ -216,8 +218,8 @@ with tqdm(total=num_iterations) as pbar:
         # Compute loss and perform backpropagation
         loss.backward(retain_graph=True)
         optimizer.step()
-        #scheduler.step()
-        
+        scheduler.step()
+        # 
         if loss.item() < min_loss:
             min_loss = loss.item()
             good_scale = transformer.scale.item()
@@ -232,14 +234,16 @@ with tqdm(total=num_iterations) as pbar:
         image_show = np.hstack([image_[..., ::-1], target_rgb_show_, overlaid_image])
         writer_sil.append_data(image_sil)
         writer_rgb.append_data(image_show[..., ::-1])
-        cv2.imshow("Training", image_show)
-        cv2.waitKey(1)
+        #cv2.imshow("Training", image_show)
+        #cv2.waitKey(1)
         
         pbar.set_description(f"Processing iteration {i + 1}, loss {loss.item()}, scale {transformer.scale.item()}")
         pbar.update(1)
+        
+        cv2.imwrite("render.png", image_show)
         #break
-cv2.imwrite("render.png", image[..., ::-1])
-cv2.destroyAllWindows()
+#cv2.destroyAllWindows()
+#swa_model.update_parameters(transformer)
 print(f"Min loss {min_loss}, scale {good_scale}")
 
 writer_sil.close()
