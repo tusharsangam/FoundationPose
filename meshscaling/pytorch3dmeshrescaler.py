@@ -2,11 +2,12 @@ import os
 import torch
 import numpy as np
 from tqdm import tqdm
+import open3d as o3d
 # Util function for loading meshes
 from pytorch3d.io import load_objs_as_meshes
 
 # Data structures and functions for rendering
-from pytorch3d.structures import Meshes
+from pytorch3d.structures import Meshes, Pointclouds
 from pytorch3d.renderer import (
     look_at_view_transform,
     PerspectiveCameras, 
@@ -24,14 +25,16 @@ from pytorch3d.loss import (
     mesh_edge_loss, 
     mesh_laplacian_smoothing, 
     mesh_normal_consistency,
+    point_mesh_face_distance,
+    point_mesh_edge_distance
 )
-from pytorch3d.ops import sample_points_from_meshes
+from pytorch3d.ops import sample_points_from_meshes, iterative_closest_point
 # add path for demo utils functions 
 import sys
 import os, imageio
 from skimage import img_as_ubyte
 sys.path.append(os.path.abspath(''))
-from utils import  read_data, MeshTransformer, fill_holes
+from utils import  read_data, MeshTransformer, fill_holes, compute_elevation_azimuth
 import os.path as osp, numpy as np, cv2
 from pytorch_msssim import MS_SSIM
 from torch.optim.swa_utils import AveragedModel, SWALR
@@ -46,7 +49,7 @@ else:
 
 # Assuming camera intrinsics matrix 'K' and pose matrix 'pose' are given
 # Example camera intrinsics and pose (adjust according to your data)
-root_folder_path = "../demo_data/bottlevideocloser"
+root_folder_path = "../demo_data/cup_close"
 intrinsic_path = osp.join(root_folder_path, "cam_K.txt")
 
 K_3x3 = np.loadtxt(intrinsic_path)  # fx, fy, cx, cy should be provided
@@ -86,6 +89,7 @@ N = verts.shape[0]
 center = verts.mean(0)
 scale = max((verts - center).abs().max(0)[0])
 mesh.offset_verts_(-center)
+#mesh.offset_verts_()
 # mesh.scale_verts_((1.0 / float(scale)))
 
 # the number of different viewpoints from which we want to render the mesh.
@@ -93,41 +97,10 @@ num_views = 1
  
 lights = PointLights(device=device, location=[[0.0, 0.0, 0.0]])
 
-
-
-def compute_elevation_azimuth(x, y, z):
-    """
-    Compute the elevation and azimuth of a vector given its x, y, z components.
-    
-    Args:
-    x (float): X component of the vector.
-    y (float): Y component of the vector.
-    z (float): Z component of the vector.
-    
-    Returns:
-    tuple: (elevation, azimuth) in degrees.
-    """
-    # Convert to PyTorch tensors
-    x, y, z = map(torch.tensor, (x, y, z))
-    
-    # Calculate the radius
-    r = torch.sqrt(x**2 + y**2 + z**2)
-    
-    # Elevation
-    elevation = torch.asin(z / r)
-    
-    # Azimuth
-    azimuth = torch.atan2(y, x)
-    
-    # Convert from radians to degrees
-    elevation_deg = torch.rad2deg(elevation)
-    azimuth_deg = torch.rad2deg(azimuth)
-    
-    return elevation_deg.item(), azimuth_deg.item()
 elev, azim = compute_elevation_azimuth(*eye_in_gl[0])
 print(elev, azim)
 #R, T = look_at_view_transform(eye=eye_in_gl)
-R, T = look_at_view_transform(dist=eye_in_gl[0][-1], elev=elev, azim=azim, degrees=True)
+R, T = look_at_view_transform(dist=eye_in_gl[0][-1], elev=elev, azim=0., degrees=True)
 cameras = PerspectiveCameras(
                              device=device, R=R, T=T, 
                              focal_length=torch.tensor([[fx, fy]]).to(torch.float32), 
@@ -135,6 +108,7 @@ cameras = PerspectiveCameras(
                              image_size=torch.tensor([[480, 640]]), 
                              in_ndc=False
                              )
+#breakpoint()
 
 raster_settings = RasterizationSettings(
     image_size=(480, 640), 
@@ -181,8 +155,15 @@ atexit.register(close_writers)
 
 
 transformer = MeshTransformer(meshes, renderer_silhouette, renderer, cameras, lights, target_rgb, eye_in_gl).to(device)
-optimizer = torch.optim.Adam(transformer.parameters(), lr=0.005) #best 0.005
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=300, gamma=0.1, verbose=False)
+
+
+optimizer = torch.optim.Adam([
+                                {'params':transformer.scale, 'name':'scale', 'lr':0.005},
+                                {'params':transformer.translate, 'name':'translate', 'lr':0.005},
+                                {'params':transformer.rotate_6d, 'name':'rotate_6d', 'lr':0.005},
+                            ], lr=0.005) #best 0.005
+
+#scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 100) #(optimizer, step_size=200, gamma=0.1, verbose=False)
 
 ms_ssim_rgb = MS_SSIM(data_range=1., channel=3, size_average=True)
 ms_ssim_silhoutte = MS_SSIM(data_range=1., channel=1, size_average=True)
@@ -190,14 +171,26 @@ ms_ssim_silhoutte = MS_SSIM(data_range=1., channel=1, size_average=True)
 writer_sil = imageio.get_writer("./optimization_sil.gif", mode='I', duration=0.3)
 writer_rgb = imageio.get_writer("./optimization_rgb.gif", mode='I', duration=0.3)
 
-tgt_point_cloud = torch.from_numpy(tgt_point_cloud).to(torch.float32).to(device).reshape(1, -1, 3)
+tgt_points = torch.from_numpy(tgt_point_cloud).to(torch.float32).to(device).reshape(1, -1, 3)
+tgt_point_cloud = Pointclouds(tgt_points)
+
 min_loss, good_scale = torch.inf, 1.0
-num_iterations = 800
+num_iterations = 100
 
 text_orig = (50, 50)
 target_rgb_show = (target_rgb.copy()*255.).astype(np.uint8)
 target_rgb_show_ = cv2.putText(target_rgb_show.copy(), "Real Target view", text_orig, cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 4, cv2.LINE_AA)
-#cv2.namedWindow("Training")
+cv2.namedWindow("Training")
+
+
+def scale_gradients(parameter, scale):
+    def hook(grad):
+        return grad * scale
+    parameter.register_hook(hook)
+
+scale_gradients(transformer.rotate_6d, 0.2)
+scale_gradients(transformer.translate, 0.3)
+scale_gradients(transformer.scale, 0.5)
 
 with tqdm(total=num_iterations) as pbar:
     for i in range(num_iterations):  # Example number of iterations
@@ -210,15 +203,26 @@ with tqdm(total=num_iterations) as pbar:
         
         loss += torch.sum((rendered_images_sil[0, ..., 3] - transformer.image_ref) ** 2)
         loss += torch.sum((rendered_images_rgb[0, ..., :3] - transformer.image_ref_rgb) ** 2)
-        loss += chamfer_distance(sample_points_from_meshes(meshes_transformed, 5000), tgt_point_cloud)[0]
-        loss += 1. - ms_ssim_silhoutte(rendered_images_sil[..., 3].unsqueeze(-1).permute(0, 3, 1, 2), transformer.image_ref.unsqueeze(0).unsqueeze(-1).permute(0, 3, 1, 2)) 
-        loss += 1. - ms_ssim_rgb(rendered_images_rgb[..., :3].permute(0, 3, 1, 2), transformer.image_ref_rgb.unsqueeze(0).permute(0, 3, 1, 2)) 
-        
+        loss += chamfer_distance(sample_points_from_meshes(meshes_transformed, 5000), tgt_points)[0]
+        loss += (1. - ms_ssim_silhoutte(rendered_images_sil[..., 3].unsqueeze(-1).permute(0, 3, 1, 2), transformer.image_ref.unsqueeze(0).unsqueeze(-1).permute(0, 3, 1, 2))) 
+        loss += (1. - ms_ssim_rgb(rendered_images_rgb[..., :3].permute(0, 3, 1, 2), transformer.image_ref_rgb.unsqueeze(0).permute(0, 3, 1, 2))) 
+        loss += mesh_laplacian_smoothing(meshes_transformed)
+        loss += mesh_edge_loss(meshes_transformed)
+        loss += mesh_normal_consistency(meshes_transformed)
+        loss += point_mesh_edge_distance(meshes_transformed, tgt_point_cloud)
+        loss += point_mesh_face_distance(meshes_transformed, tgt_point_cloud)
         
         # Compute loss and perform backpropagation
         loss.backward(retain_graph=True)
         optimizer.step()
-        scheduler.step()
+        #scheduler.step()
+        
+        #for param in optimizer.param_groups:
+        if (i+1) == num_iterations//2:  #and param['name'] in ['scale']:
+            #param['lr'] = 0.005
+            scale_gradients(transformer.scale, 1.0)
+            scale_gradients(transformer.rotate_6d, 0.0)
+            scale_gradients(transformer.translate, 0.0)
         # 
         if loss.item() < min_loss:
             min_loss = loss.item()
@@ -234,15 +238,15 @@ with tqdm(total=num_iterations) as pbar:
         image_show = np.hstack([image_[..., ::-1], target_rgb_show_, overlaid_image])
         writer_sil.append_data(image_sil)
         writer_rgb.append_data(image_show[..., ::-1])
-        #cv2.imshow("Training", image_show)
-        #cv2.waitKey(1)
+        cv2.imshow("Training", image_show)
+        cv2.waitKey(1)
         
-        pbar.set_description(f"Processing iteration {i + 1}, loss {loss.item()}, scale {transformer.scale.item()}")
+        pbar.set_description(f"Processing iteration {i + 1}, loss {loss.item()}, scale {transformer.scale.item()}, translation {transformer.translate.data}")
         pbar.update(1)
         
         cv2.imwrite("render.png", image_show)
         #break
-#cv2.destroyAllWindows()
+cv2.destroyAllWindows()
 #swa_model.update_parameters(transformer)
 print(f"Min loss {min_loss}, scale {good_scale}")
 
