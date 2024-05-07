@@ -156,3 +156,7 @@ data/
 logs/
 !BundleTrack/XMem/inference/data
 run_used.yml
+
+#visualizations
+meshscaling/*.gif
+meshscaling/*.png
