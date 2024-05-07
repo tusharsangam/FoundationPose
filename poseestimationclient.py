@@ -61,8 +61,8 @@ def load_model(model_name="owlvit", device="cpu"):
         )
 
 
-load_model("owlvit", device)
-load_model("sam", device)
+# load_model("owlvit", device)
+# load_model("sam", device)
 connect_socket(2100)
 
 def detect(img, text_queries, score_threshold, device):
@@ -143,7 +143,7 @@ def get_mask(rgb_image:np.ndarray, bbox:list, object_name:str, device:str="cuda"
     return mask_image
 
 def pose_estimation(
-    rgb_image:np.ndarray, depth_raw:np.ndarray, bbox:list, object_name:str, cam_intrinsics:Intrinsics, device:str="cuda"
+    rgb_image:np.ndarray, depth_raw:np.ndarray, bbox:list, object_name:str, cam_intrinsics:Intrinsics, mask:np.ndarray=None, device:str="cuda"
 ) -> None:
     # load_models(device)
     global socket
@@ -163,22 +163,17 @@ def pose_estimation(
         if depth_raw is not None:
             depth_raw = cv2.resize(depth_raw, (640, 480))
     
-
-    mask_image = get_mask(rgb_image, bbox, object_name, device)
+    if mask is None:
+        mask_image = get_mask(rgb_image, bbox, object_name, device)
+    else:
+        mask_image = mask
 
     cv2.imwrite("masked_image.png", mask_image)
     est_refine_iter = 5
     track_refine_iter = 2
-    socket.send_pyobj((rgb_image, depth_raw, mask_image, K, est_refine_iter, track_refine_iter))
+    socket.send_pyobj((rgb_image, depth_raw, mask_image, K.astype(np.double), est_refine_iter, track_refine_iter))
     pose = socket.recv_pyobj()
     print(f"Response from server {pose}")
-    pose = Rotation.from_marix(pose)
-    euler_zxy = pose.as_euler("zxy", "True")
-    rospy.set_param("pose_correction_success", True)
-    rospy.set_param(
-        "pose_correction",
-        [float(euler_zxy[0]), float(euler_zxy[1]), float(euler_zxy[-1])],
-    )
 
 
 
@@ -188,19 +183,24 @@ if __name__ == "__main__":
     from perception_and_utils.utils.generic_utils import map_user_input_to_boolean
     #load static data
     #data_root_path = "/fsx-siro/sangamtushar/FoundationPose/demo_data/bottleposevideo"
-    data_root_path = "/home/tushar/Desktop/FoundationPoseForSpotSim2Real/demo_data/bottle_anchor_scan_intel"
+    data_root_path = "./demo_data/bottlevideocloser"
     intrinsics = [
         383.2665100097656,
         383.2665100097656,
         324.305419921875,
         236.64828491210938,
     ]
-    # rgb_path = osp.join(data_root_path, "rgb", "001.png") 
-    # depth_path = osp.join(data_root_path, "depth", "001.png")
-    # rgb = cv2.imread(rgb_path)
-    # depth = cv2.imread(depth_path)
+
+    rgb_path = osp.join(data_root_path, "rgb", "00000.png") 
+    depth_path = osp.join(data_root_path, "depth", "00000.png")
+    mask_path = osp.join(data_root_path, "masks", "00000.png")
+    rgb = cv2.imread(rgb_path)
+    depth = cv2.imread(depth_path, -1)
+    mask = cv2.imread(mask_path)
     camera_intrinsics:Intrinsics = Intrinsics(*intrinsics)
+    pose_estimation(rgb, depth, None, "bottle", camera_intrinsics, mask)
     
+    '''
     rgb_filenames = os.listdir(osp.join(data_root_path, "rgb"))
     rgb_filenames.sort()
     #print(rgb_filenames)
@@ -228,3 +228,4 @@ if __name__ == "__main__":
 
     #Otherwise do it using spot
     #from spot_wrapper.spot import Spot, SpotCamIds, image_response_to_cv2
+    '''

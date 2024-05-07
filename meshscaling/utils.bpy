@@ -138,7 +138,7 @@ def generate_point_cloud(
     points_3D = np.vstack((X, Y, Z)).T
 
     # Optional: Filter out points with a depth of 0 or below a certain threshold
-    valid_depth_indices = np.logical_and(depth_values > 0., depth_values <= 2.) # Example threshold
+    valid_depth_indices = depth_values > 0  # Example threshold
     print(
         f"Total vertices: {len(points_3D)}, Corrupt vertices: {len(points_3D) - len(valid_depth_indices)}"
     )
@@ -149,8 +149,6 @@ def generate_point_cloud(
     colors = colors[valid_depth_indices][..., ::-1]
     points_3D[:, 1] *= -1.0
     points_3D[:, -1]*= -1.0
-    # points_3D[:, 0] *= -1.0
-    # points_3D[:, 1]*= -1.0
     #plot_pointcloud(points_3D, "tgt_pointcloud")
     point_cloud = o3d.geometry.PointCloud()
     point_cloud.points = o3d.utility.Vector3dVector(points_3D)
@@ -162,88 +160,17 @@ def generate_point_cloud(
     #points_3D = farthest_point_sampling(points_3D, 5000)
     return points_3D
 
-def project_3d_to_pixel_uv(points_3d, fx, fy, cx, cy):
-    """
-    Back projects given xyz 3d point to pixel location u,v using camera intrinsics
-    """
-    Z = points_3d[:, -1]
-    X_Z = points_3d[:, 0] / Z
-    Y_Z = points_3d[:, 1] / Z
-    u = (fx * X_Z) + cx
-    v = (fy * Y_Z) + cy
-    return np.stack([u.flatten(), v.flatten()], axis=1).reshape(-1, 2)
-from pytorch3d.transforms import Transform3d
-def read_data(depth_path, object_mask_path, rgb_image_path, body_T_gripper_path, gripper_T_intel_path, fx, fy, px, py):
+def read_data(depth_path, object_mask_path, rgb_image_path, fx, fy, px, py):
     assert osp.exists(depth_path), f"{depth_path} doesn't exists"
     assert osp.exists(object_mask_path), f"{object_mask_path} doesn't exists"
     assert osp.exists(rgb_image_path), f"{object_mask_path} doesn't exists"
     depth_image = cv2.imread(depth_path, -1)
     point_cloud_all = generate_point_cloud(cv2.imread(rgb_image_path), depth_image, np.ones((480, 640), dtype=np.uint8), fx, fy, px, py)
-    dist_to_zero = np.sqrt(np.square(point_cloud_all[:, 0] - 0.) + np.square(point_cloud_all[:, 1] - 0.))
-    dist_close_to_zero, index_close_to_zero = dist_to_zero.min(), np.argmin(dist_to_zero)
-    point_close_to_zero = point_cloud_all[index_close_to_zero].copy()
-    point_close_to_zero[1] *= -1.
-    point_close_to_zero[-1] *= -1.
-    point_close_to_zero = point_close_to_zero.reshape(1, 3)
-    #print(point_close_to_zero, dist_close_to_zero)
-    #point_close_to_zero_in_image = project_3d_to_pixel_uv(point_close_to_zero, fx, fy, px, py)[0]
-    # rgb_image_view = cv2.imread(rgb_image_path).copy()
-    # rgb_image_view = cv2.circle(
-    #         rgb_image_view, (int(point_close_to_zero_in_image[0]), int(point_close_to_zero_in_image[1])), 2, (0, 0, 255)
-    #     )
-    #cv2.imwrite("worldorigin.png", rgb_image_view)
-    body_T_gripper = torch.from_numpy(np.loadtxt(body_T_gripper_path)@np.load(gripper_T_intel_path))
-    point_close_to_zero_in_body = Transform3d(matrix=body_T_gripper.T).transform_points(torch.from_numpy(point_close_to_zero))[0].numpy()
-    intel_cam_origin_in_body = Transform3d(matrix=body_T_gripper.T).transform_points(torch.zeros((1, 3), dtype=torch.double))[0].numpy()
-    camera_height_in_world_origin = intel_cam_origin_in_body[-1] - point_close_to_zero_in_body[-1]
-    camera_diag_distance_from_world_origin = point_close_to_zero[0][-1]
-    elev = np.rad2deg(np.arcsin((intel_cam_origin_in_body[-1]/camera_diag_distance_from_world_origin)))
-    
-    object_mask = cv2.imread(object_mask_path)
-    object_mask = np.where(object_mask > 0, 1, 0)
-    depth_image_masked = depth_image*object_mask[..., 0].astype(depth_image.dtype)
-    
-    non_zero_indices = np.nonzero(depth_image_masked)
-    # Calculate the bounding box coordinates
-    y_min, y_max = non_zero_indices[0].min(), non_zero_indices[0].max()
-    x_min, x_max = non_zero_indices[1].min(), non_zero_indices[1].max()
-
-    # Format as (x1, y1, x2, y2)
-    rgb_image = cv2.imread(rgb_image_path)
-    rgb_image = rgb_image*(object_mask).astype(rgb_image.dtype) #object mask is 0-1
-    rgb_image[object_mask[..., 0] == 0.] = [255, 255, 255]
-    #rgb_image = np.where(rgb_image == 0, 255, rgb_image).astype(np.uint8)
-    #rgb_image_with_bbox = cv2.rectangle(rgb_image.copy(), (int(x_min), int(y_min)), (int(x_max), int(y_max)), (255, 0, 0), 2)
-    #cv2.imwrite("rgb_image_with_bbox.png", rgb_image)
-    rgb_image = rgb_image.astype(np.float32)/255.
-    
-    cx, cy = (x_min + x_max) / 2., (y_min + y_max)/2.
-    Z = sample_patch_around_point(int(cx), int(cy), depth_image_masked)*1e-3
-    
-    # print(fx, fy, cx, cy)
-    # Get 3D point
-    X = (cx - px) * Z / fx
-    Y = (cy - py) * Z / fy
-    point_at_center_in_camera_frame = np.array([X, Y, Z], dtype=np.float32)
-    point_at_center_in_world_frame = point_at_center_in_camera_frame - point_close_to_zero[0]
-    mesh_centroid = np.array([-1*point_at_center_in_world_frame[0], -1*point_at_center_in_world_frame[1], point_at_center_in_world_frame[-1]])
-    
-    
-    points_3d = generate_point_cloud(cv2.imread(rgb_image_path), 
-                                     cv2.imread(depth_path, -1), 
-                                     cv2.imread(object_mask_path)[..., 0], 
-                                     fx, fy, px, py)
-    
-    
-    return camera_diag_distance_from_world_origin, mesh_centroid, elev, rgb_image, object_mask[..., 0], points_3d
-
-
-def read_data_bck(depth_path, object_mask_path, rgb_image_path, fx, fy, px, py):
-    assert osp.exists(depth_path), f"{depth_path} doesn't exists"
-    assert osp.exists(object_mask_path), f"{object_mask_path} doesn't exists"
-    assert osp.exists(rgb_image_path), f"{object_mask_path} doesn't exists"
-    depth_image = cv2.imread(depth_path, -1)
-    
+    close_to_zero = np.isclose(point_cloud_all[:, 0], 0, atol=1e-2) & np.isclose(point_cloud_all[:, 1], 0, atol=1e-2)
+    # Get the indices where both conditions are True
+    indices = np.where(close_to_zero)[0]
+    print(point_cloud_all[close_to_zero])
+    breakpoint()
     object_mask = cv2.imread(object_mask_path)
     object_mask = np.where(object_mask > 0, 1, 0)
     depth_image_masked = depth_image*object_mask[..., 0].astype(depth_image.dtype)
@@ -272,7 +199,7 @@ def read_data_bck(depth_path, object_mask_path, rgb_image_path, fx, fy, px, py):
     point_at_center_in_camera_frame = np.array([X, Y, Z], dtype=np.float32)
     camera_point_in_center_frame = -1.*point_at_center_in_camera_frame
     camera_point_in_center_frame = camera_point_in_center_frame/np.linalg.norm(camera_point_in_center_frame)
-    camera_point_in_center_frame_in_gl_system = np.array([-1*camera_point_in_center_frame[0], -1*camera_point_in_center_frame[1], camera_point_in_center_frame[-1]], dtype=np.float32)
+    camera_point_in_center_frame_in_gl_system = np.array([camera_point_in_center_frame[0], -1*camera_point_in_center_frame[1], -1.*camera_point_in_center_frame[-1]], dtype=np.float32)
     
     points_3d = generate_point_cloud(cv2.imread(rgb_image_path), 
                                      cv2.imread(depth_path, -1), 
@@ -321,7 +248,7 @@ def compute_elevation_azimuth(x, y, z):
 
 from pytorch3d.transforms import euler_angles_to_matrix, matrix_to_rotation_6d, rotation_6d_to_matrix
 class MeshTransformer(torch.nn.Module):
-    def __init__(self, meshes, renderer_silhoutte, rgb_renderer, cameras, lights, image_ref, mesh_centroid):
+    def __init__(self, meshes, renderer_silhoutte, rgb_renderer, cameras, lights, image_ref, cam_eye):
         super().__init__()
         self.meshes = meshes
         self.device = meshes.device
@@ -347,23 +274,21 @@ class MeshTransformer(torch.nn.Module):
         #self.rotate = torch.nn.Parameter(torch.tensor([[0., 0., 0.]]).to(self.meshes.device), requires_grad=True)
         #self.rotate = torch.nn.Parameter(torch.eye(3).reshape(1, 3, 3).to(self.meshes.device), requires_grad=True)
     
-        self.initial_correction_transformation(mesh_centroid)
+        self.initial_correction_transformation(cam_eye)
     
-    def initial_correction_transformation(self, mesh_centroid):
+    def initial_correction_transformation(self, cam_eye):
         
         #Orient the object upside down to reduce rotation parameter stress
-        angles = np.deg2rad([90, 0, 0])
+        angles = np.deg2rad([0, 0, 90])
         initial_rotation = euler_angles_to_matrix(torch.from_numpy(angles).reshape(1, 3), "XYZ").to(self.meshes.device)
         transformed_verts = Transform3d().rotate(initial_rotation).to(self.meshes.device).transform_points(self.meshes.verts_padded())
         self.meshes = self.meshes.update_padded(transformed_verts)
         
-        # angles = np.deg2rad([0, 180, 0])
-        # initial_rotation = euler_angles_to_matrix(torch.from_numpy(angles).reshape(1, 3), "XYZ").to(self.meshes.device)
-        # transformed_verts = Transform3d().rotate(initial_rotation).to(self.meshes.device).transform_points(self.meshes.verts_padded())
-        # self.meshes = self.meshes.update_padded(transformed_verts)
-
-        transformed_verts = Transform3d().translate(torch.from_numpy(mesh_centroid).reshape(1, 3)).to(self.meshes.device).transform_points(self.meshes.verts_padded())
+        angles = np.deg2rad([0, 180, 0])
+        initial_rotation = euler_angles_to_matrix(torch.from_numpy(angles).reshape(1, 3), "XYZ").to(self.meshes.device)
+        transformed_verts = Transform3d().rotate(initial_rotation).to(self.meshes.device).transform_points(self.meshes.verts_padded())
         self.meshes = self.meshes.update_padded(transformed_verts)
+        
         #transformed_verts = Transform3d().translate(-1.*torch.tensor(cam_eye).to(self.meshes.device)).to(self.meshes.device).transform_points(self.meshes.verts_padded())
         #self.meshes = self.meshes.update_padded(transformed_verts)
 
@@ -385,7 +310,7 @@ class MeshTransformer(torch.nn.Module):
         rotation_mat = rotation_6d_to_matrix(self.rotate_6d).to(self.meshes.device)
         #self.translate[0][0] = 0.0
         transformed_verts = Transform3d().rotate(rotation_mat).translate(self.translate).scale(self.scale).to(self.meshes.device).transform_points(meshes.verts_padded())
-        #transformed_verts = Transform3d().scale(self.scale).to(self.meshes.device).transform_points(meshes.verts_padded())
+        #transformed_verts = Transform3d().rotate(rotation_mat).scale(self.scale).to(self.meshes.device).transform_points(meshes.verts_padded())
         meshes = meshes.update_padded(transformed_verts)
         image_sil = self.renderer_silhoutte(meshes_world=meshes, cameras=self.cameras, lights=self.lights)
         image_rgb = self.renderer_rgb(meshes_world=meshes, cameras=self.cameras, lights=self.lights)

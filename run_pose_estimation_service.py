@@ -11,7 +11,7 @@ from estimater import *
 from spotsim2realdatareader import *
 import zmq
 
-mesh_path = "./demo_data/bottleleft/mesh/mesh.obj"
+mesh_path = "/home/tushar/Desktop/bottlenerfstudio/exports/mesh/edited/mesh.obj"
 
 if __name__=='__main__':
   code_dir = os.path.dirname(os.path.realpath(__file__))
@@ -49,7 +49,7 @@ if __name__=='__main__':
       req_data = socket.recv_pyobj()
       if len(req_data) == 6: 
         est_refine_iter, track_refine_iter = req_data[-2], req_data[-1]
-      reader = YcbineoatReader(req_data, shorter_side=None, zfar=np.inf)
+      reader = YcbineoatReaderModified(req_data, shorter_side=None, zfar=np.inf)
       
       start_time = time.time()
 
@@ -89,7 +89,7 @@ if __name__=='__main__':
         break
 
       print(f"Inference time {time.time() - start_time} secs")
-      socket.send_pyobj(center_pose)
+      socket.send_pyobj((center_pose, pose, to_origin, vis))
 
   
 

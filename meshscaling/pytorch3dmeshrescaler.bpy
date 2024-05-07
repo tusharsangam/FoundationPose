@@ -56,25 +56,15 @@ K_3x3 = np.loadtxt(intrinsic_path)  # fx, fy, cx, cy should be provided
 fx, fy = K_3x3[0,0], K_3x3[1, 1]
 px, py = K_3x3[0, 2], K_3x3[1, 2]
 
-
-# eye_in_gl, target_rgb, target_silhoutte, tgt_point_cloud = read_data(
-#                                     osp.join(root_folder_path, "depth", f"{str('0').zfill(5)}.png"),
-#                                     osp.join(root_folder_path, "masks", f"{str('0').zfill(5)}.png"),
-#                                     osp.join(root_folder_path, "rgb", f"{str('0').zfill(5)}.png"),
-#                                     fx, fy, px, py
-#                                      )
-
-dist_to_cam, mesh_centroid, elev, target_rgb, target_silhoutte, tgt_point_cloud = read_data(
-                                    osp.join(root_folder_path, "depth", f"{str('0').zfill(5)}.png"),
+eye_in_gl, target_rgb, target_silhoutte, tgt_point_cloud = read_data(osp.join(root_folder_path, "depth", f"{str('0').zfill(5)}.png"),
                                     osp.join(root_folder_path, "masks", f"{str('0').zfill(5)}.png"),
                                     osp.join(root_folder_path, "rgb", f"{str('0').zfill(5)}.png"),
-                                    osp.join(root_folder_path, "body_T_gripper.txt"),
-                                    "/home/tushar/Desktop/spot-sim2real/spot_rl_experiments/spot_rl/utils/gripper_T_intel.npy",
                                     fx, fy, px, py
                                      )
 
 target_silhoutte = torch.from_numpy((target_silhoutte.astype(np.float32))).to(device)
 
+print(f"Eye in gl {eye_in_gl}")
 
 
 
@@ -99,7 +89,6 @@ N = verts.shape[0]
 center = verts.mean(0)
 scale = max((verts - center).abs().max(0)[0])
 mesh.offset_verts_(-center)
-#mesh.offset_verts_(torch.from_numpy(mesh_centroid).to(device))
 #mesh.offset_verts_()
 # mesh.scale_verts_((1.0 / float(scale)))
 
@@ -108,10 +97,10 @@ num_views = 1
  
 lights = PointLights(device=device, location=[[0.0, 0.0, 0.0]])
 
-#elev, azim = compute_elevation_azimuth(*eye_in_gl[0])
-
+elev, azim = compute_elevation_azimuth(*eye_in_gl[0])
+print(elev, azim)
 #R, T = look_at_view_transform(eye=eye_in_gl)
-R, T = look_at_view_transform(dist=dist_to_cam, elev=elev, azim=0., degrees=True)
+R, T = look_at_view_transform(dist=eye_in_gl[0][-1], elev=elev, azim=0., degrees=True)
 cameras = PerspectiveCameras(
                              device=device, R=R, T=T, 
                              focal_length=torch.tensor([[fx, fy]]).to(torch.float32), 
@@ -165,7 +154,7 @@ def close_writers():
 atexit.register(close_writers)
 
 
-transformer = MeshTransformer(meshes, renderer_silhouette, renderer, cameras, lights, target_rgb, mesh_centroid).to(device)
+transformer = MeshTransformer(meshes, renderer_silhouette, renderer, cameras, lights, target_rgb, eye_in_gl).to(device)
 
 
 optimizer = torch.optim.Adam([
@@ -214,14 +203,14 @@ with tqdm(total=num_iterations) as pbar:
         
         loss += torch.sum((rendered_images_sil[0, ..., 3] - transformer.image_ref) ** 2)
         loss += torch.sum((rendered_images_rgb[0, ..., :3] - transformer.image_ref_rgb) ** 2)
-        #loss += chamfer_distance(sample_points_from_meshes(meshes_transformed, 5000), tgt_points)[0]
+        loss += chamfer_distance(sample_points_from_meshes(meshes_transformed, 5000), tgt_points)[0]
         loss += (1. - ms_ssim_silhoutte(rendered_images_sil[..., 3].unsqueeze(-1).permute(0, 3, 1, 2), transformer.image_ref.unsqueeze(0).unsqueeze(-1).permute(0, 3, 1, 2))) 
         loss += (1. - ms_ssim_rgb(rendered_images_rgb[..., :3].permute(0, 3, 1, 2), transformer.image_ref_rgb.unsqueeze(0).permute(0, 3, 1, 2))) 
         loss += mesh_laplacian_smoothing(meshes_transformed)
         loss += mesh_edge_loss(meshes_transformed)
         loss += mesh_normal_consistency(meshes_transformed)
-        #loss += point_mesh_edge_distance(meshes_transformed, tgt_point_cloud)
-        #loss += point_mesh_face_distance(meshes_transformed, tgt_point_cloud)
+        loss += point_mesh_edge_distance(meshes_transformed, tgt_point_cloud)
+        loss += point_mesh_face_distance(meshes_transformed, tgt_point_cloud)
         
         # Compute loss and perform backpropagation
         loss.backward(retain_graph=True)

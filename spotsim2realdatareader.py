@@ -66,7 +66,8 @@ class YcbineoatReaderModified:
         if mask[...,c].sum()>0:
           mask = mask[...,c]
           break
-    mask = cv2.resize(mask, (self.W,self.H), interpolation=cv2.INTER_NEAREST).astype(bool).astype(np.uint8)
+    if mask.dtype != bool:
+      mask = cv2.resize(mask, (self.W,self.H), interpolation=cv2.INTER_NEAREST).astype(bool).astype(np.uint8)
     return mask
 
   def get_depth(self,i):
