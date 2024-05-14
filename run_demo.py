@@ -15,12 +15,12 @@ import argparse
 if __name__=='__main__':
   parser = argparse.ArgumentParser()
   code_dir = os.path.dirname(os.path.realpath(__file__))
-  parser.add_argument('--mesh_file', type=str, default=f'{code_dir}/demo_data/bottle0/mesh/mesh.obj')
-  parser.add_argument('--test_scene_dir', type=str, default=f'{code_dir}/demo_data/bottlevideo')
+  parser.add_argument('--mesh_file', type=str, default='/home/tushar/Desktop/penguine_nerf/exports/mesh/edited/mesh.obj')
+  parser.add_argument('--test_scene_dir', type=str, default=f'{code_dir}/demo_data/penguine')
   parser.add_argument('--est_refine_iter', type=int, default=5)
   parser.add_argument('--track_refine_iter', type=int, default=2)
   parser.add_argument('--debug', type=int, default=3)
-  parser.add_argument('--debug_dir', type=str, default=f'{code_dir}/bottlevideo/debug')
+  parser.add_argument('--debug_dir', type=str, default=f'{code_dir}/penguine/debug')
   args = parser.parse_args()
 
   set_logging_format()
@@ -47,7 +47,7 @@ if __name__=='__main__':
     logging.info(f'i:{i}')
     color = reader.get_color(i)
     depth = reader.get_depth(i)
-    if i==0:
+    if True:
       mask = reader.get_mask(0).astype(bool)
       pose = est.register(K=reader.K, rgb=color, depth=depth, ob_mask=mask, iteration=args.est_refine_iter)
 

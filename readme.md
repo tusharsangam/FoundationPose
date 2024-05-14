@@ -1,3 +1,10 @@
+# For Spot-sim2real setup follow [Data Preapare step](#data-prepare) (avoid downloading the training dataset) & [Env setup option 2](#env-setup-option-2-conda-experimental)
+  1) Test with ``` python run_demo.py ``` by changing the necessary arguments with the demo data provided see [Running the demo section](#run-model-based-demo).
+  2) To run our custom pose estimation server for spot-sim2real run ``` CUDA_VISIBLE_DEVICES=1 python run_pose_estimation_service.py ``` or ``` python run_pose_estimation_service.py ```
+  3) Download nerf meshes from slack; current objects [bottle, penguin & cup] & place it in the meshes folder 
+  4) Make sure you are not running any other service on port 2100, if you want to change the port please change it in necessary places at run_pose_estimation_service.py & in spot-sim2real.
+
+
 # FoundationPose: Unified 6D Pose Estimation and Tracking of Novel Objects
 [[Paper]](https://arxiv.org/abs/2312.08344) [[Website]](https://nvlabs.github.io/FoundationPose/)
 
@@ -86,40 +93,36 @@ For more recent GPU such as 4090, refer to [this](https://github.com/NVlabs/Foun
 
 # Env setup option 2: conda (experimental)
 
-- Install Eigen3 3.4.0
-
-```bash
-cd $HOME && wget -q https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz && \
-tar -xzf eigen-3.4.0.tar.gz && \
-cd eigen-3.4.0 && mkdir build && cd build
-cmake .. -Wno-dev -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS=-std=c++14 ..
-sudo make install
-cd $HOME && rm -rf eigen-3.4.0 eigen-3.4.0.tar.gz
-```
-
 - Setup conda environment
 
 ```bash
 # create conda environment
-create -n foundationpose python=3.9
+conda env create --name foundationpose --file=environment.yml
 
 # activate conda environment
 conda activate foundationpose
 
-# install dependencies
-python -m pip install -r requirements.txt
+#[SKIP] since we are setting up the repo from my environment.yml file
+# # install dependencies 
+# python -m pip install -r requirements.txt
 
-# Install NVDiffRast
-python -m pip install --quiet --no-cache-dir git+https://github.com/NVlabs/nvdiffrast.git
+# # Install NVDiffRast [SKIP]
+# python -m pip install --quiet --no-cache-dir git+https://github.com/NVlabs/nvdiffrast.git
 
-# Kaolin (Optional, needed if running model-free setup)
-python -m pip install --quiet --no-cache-dir kaolin==0.15.0 -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.0.0_cu118.html
+# # Kaolin (Optional, needed if running model-free setup) [SKIP]
+# python -m pip install --quiet --no-cache-dir kaolin==0.15.0 -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.0.0_cu118.html
 
-# PyTorch3D
-python -m pip install --quiet --no-index --no-cache-dir pytorch3d -f https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py39_cu118_pyt200/download.html
+# # PyTorch3D [SKIP]
+# python -m pip install --quiet --no-index --no-cache-dir pytorch3d -f https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py39_cu118_pyt200/download.html
+
 
 # Build extensions
 CMAKE_PREFIX_PATH=$CONDA_PREFIX/lib/python3.9/site-packages/pybind11/share/cmake/pybind11 bash build_all_conda.sh
+
+if mycuda fails to compile please use this following debug step & rerun the above build step
+cd bundlesdf/mycuda/
+gedit setup.py
+  edit line 36 -> "/home/tushar/miniconda3/envs/foundationpose/include/eigen3" replace "/home/tushar/miniconda3/envs/foundationpose/" with your CONDA path, you can do echo $CONDA_PREFIX to check your path
 ```
 
 

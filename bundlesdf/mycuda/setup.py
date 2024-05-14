@@ -7,8 +7,8 @@
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
 
+import os
 from setuptools import setup
-import os,sys
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 from torch.utils.cpp_extension import load
 
@@ -17,7 +17,7 @@ code_dir = os.path.dirname(os.path.realpath(__file__))
 
 nvcc_flags = ['-Xcompiler', '-O3', '-std=c++14', '-U__CUDA_NO_HALF_OPERATORS__', '-U__CUDA_NO_HALF_CONVERSIONS__', '-U__CUDA_NO_HALF2_OPERATORS__']
 c_flags = ['-O3', '-std=c++14']
-
+CONDA_PREFIX = os.environ.get('CONDA_PREFIX', '/default/path/if/not/set')
 setup(
     name='common',
     extra_cflags=c_flags,
@@ -33,7 +33,7 @@ setup(
         ],extra_compile_args={'gcc': c_flags, 'nvcc': nvcc_flags}),
     ],
     include_dirs=[
-        "/home/tushar/miniconda3/envs/foundationpose/include/eigen3",
+        f"{CONDA_PREFIX}/include/eigen3",
         #"/usr/include/eigen3",
     ],
     cmdclass={

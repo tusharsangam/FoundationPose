@@ -183,7 +183,7 @@ if __name__ == "__main__":
     from perception_and_utils.utils.generic_utils import map_user_input_to_boolean
     #load static data
     #data_root_path = "/fsx-siro/sangamtushar/FoundationPose/demo_data/bottleposevideo"
-    data_root_path = "./demo_data/bottlevideocloser"
+    data_root_path = "./demo_data/cup_scan_anchor_intel"
     intrinsics = [
         383.2665100097656,
         383.2665100097656,
@@ -191,16 +191,16 @@ if __name__ == "__main__":
         236.64828491210938,
     ]
 
-    rgb_path = osp.join(data_root_path, "rgb", "00000.png") 
-    depth_path = osp.join(data_root_path, "depth", "00000.png")
-    mask_path = osp.join(data_root_path, "masks", "00000.png")
-    rgb = cv2.imread(rgb_path)
-    depth = cv2.imread(depth_path, -1)
-    mask = cv2.imread(mask_path)
-    camera_intrinsics:Intrinsics = Intrinsics(*intrinsics)
-    pose_estimation(rgb, depth, None, "bottle", camera_intrinsics, mask)
+    # rgb_path = osp.join(data_root_path, "rgb", "00000.png") 
+    # depth_path = osp.join(data_root_path, "depth", "00000.png")
+    # mask_path = osp.join(data_root_path, "masks", "00000.png")
+    # rgb = cv2.imread(rgb_path)
+    # depth = cv2.imread(depth_path, -1)
+    # mask = cv2.imread(mask_path)
+    # camera_intrinsics:Intrinsics = Intrinsics(*intrinsics)
+    # pose_estimation(rgb, depth, None, "bottle", camera_intrinsics, mask)
     
-    '''
+    
     rgb_filenames = os.listdir(osp.join(data_root_path, "rgb"))
     rgb_filenames.sort()
     #print(rgb_filenames)
@@ -209,7 +209,7 @@ if __name__ == "__main__":
         rgb_image = cv2.imread(osp.join(data_root_path, "rgb", rgb_file_name))
         mask_image_file_name = osp.join(data_root_path, "masks", rgb_file_name)
         try:
-            mask_image = get_mask(rgb_image, None, "bottle", "cuda")
+            mask_image = get_mask(rgb_image, None, "cup", "cuda")
             cv2.imshow("Mask", mask_image)
             cv2.waitKey(1)
             save_or_not = map_user_input_to_boolean("Save this image ?")
@@ -228,4 +228,4 @@ if __name__ == "__main__":
 
     #Otherwise do it using spot
     #from spot_wrapper.spot import Spot, SpotCamIds, image_response_to_cv2
-    '''
+    

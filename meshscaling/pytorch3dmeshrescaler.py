@@ -34,10 +34,10 @@ import sys
 import os, imageio
 from skimage import img_as_ubyte
 sys.path.append(os.path.abspath(''))
-from utils import  read_data, MeshTransformer, fill_holes, compute_elevation_azimuth
+from utils import  read_data, MeshTransformer
 import os.path as osp, numpy as np, cv2
 from pytorch_msssim import MS_SSIM
-from torch.optim.swa_utils import AveragedModel, SWALR
+from scipy.spatial.transform import Rotation as R_
 import atexit
 
 # Setup
@@ -49,7 +49,7 @@ else:
 
 # Assuming camera intrinsics matrix 'K' and pose matrix 'pose' are given
 # Example camera intrinsics and pose (adjust according to your data)
-root_folder_path = "../demo_data/cup_close"
+root_folder_path = "../demo_data/penguine"
 intrinsic_path = osp.join(root_folder_path, "cam_K.txt")
 
 K_3x3 = np.loadtxt(intrinsic_path)  # fx, fy, cx, cy should be provided
@@ -64,12 +64,11 @@ px, py = K_3x3[0, 2], K_3x3[1, 2]
 #                                     fx, fy, px, py
 #                                      )
 
-dist_to_cam, mesh_centroid, elev, target_rgb, target_silhoutte, tgt_point_cloud = read_data(
+lookAT, elev, mesh_centroid, target_rgb, target_silhoutte, tgt_point_cloud = read_data(
                                     osp.join(root_folder_path, "depth", f"{str('0').zfill(5)}.png"),
                                     osp.join(root_folder_path, "masks", f"{str('0').zfill(5)}.png"),
                                     osp.join(root_folder_path, "rgb", f"{str('0').zfill(5)}.png"),
-                                    osp.join(root_folder_path, "body_T_gripper.txt"),
-                                    "/home/tushar/Desktop/spot-sim2real/spot_rl_experiments/spot_rl/utils/gripper_T_intel.npy",
+                                    osp.join("../demo_data/cup_scan_anchor_intel", "body_T_intel.txt"),
                                     fx, fy, px, py
                                      )
 
@@ -99,9 +98,7 @@ N = verts.shape[0]
 center = verts.mean(0)
 scale = max((verts - center).abs().max(0)[0])
 mesh.offset_verts_(-center)
-#mesh.offset_verts_(torch.from_numpy(mesh_centroid).to(device))
-#mesh.offset_verts_()
-# mesh.scale_verts_((1.0 / float(scale)))
+
 
 # the number of different viewpoints from which we want to render the mesh.
 num_views = 1
@@ -110,8 +107,9 @@ lights = PointLights(device=device, location=[[0.0, 0.0, 0.0]])
 
 #elev, azim = compute_elevation_azimuth(*eye_in_gl[0])
 
-#R, T = look_at_view_transform(eye=eye_in_gl)
-R, T = look_at_view_transform(dist=dist_to_cam, elev=elev, azim=0., degrees=True)
+#R, T = look_at_view_transform(eye=[]) eye=torch.tensor([[0., 0., 0.]]).float(),
+R, T = look_at_view_transform(eye=torch.tensor([[0., 0., 0.]]).float(), at=torch.from_numpy(lookAT).float(), elev=elev, degrees=True)
+print(f"Euler camera angles zyx {R_.from_matrix(R.squeeze().numpy()).as_euler('zyx', True)}")
 cameras = PerspectiveCameras(
                              device=device, R=R, T=T, 
                              focal_length=torch.tensor([[fx, fy]]).to(torch.float32), 
@@ -119,7 +117,6 @@ cameras = PerspectiveCameras(
                              image_size=torch.tensor([[480, 640]]), 
                              in_ndc=False
                              )
-#breakpoint()
 
 raster_settings = RasterizationSettings(
     image_size=(480, 640), 
@@ -186,7 +183,7 @@ tgt_points = torch.from_numpy(tgt_point_cloud).to(torch.float32).to(device).resh
 tgt_point_cloud = Pointclouds(tgt_points)
 
 min_loss, good_scale = torch.inf, 1.0
-num_iterations = 100
+num_iterations = 200
 
 text_orig = (50, 50)
 target_rgb_show = (target_rgb.copy()*255.).astype(np.uint8)
@@ -199,9 +196,9 @@ def scale_gradients(parameter, scale):
         return grad * scale
     parameter.register_hook(hook)
 
-scale_gradients(transformer.rotate_6d, 0.2)
-scale_gradients(transformer.translate, 0.3)
-scale_gradients(transformer.scale, 0.5)
+# scale_gradients(transformer.rotate_6d, 0.2)
+# scale_gradients(transformer.translate, 0.3)
+# scale_gradients(transformer.scale, 0.5)
 
 with tqdm(total=num_iterations) as pbar:
     for i in range(num_iterations):  # Example number of iterations
@@ -214,14 +211,14 @@ with tqdm(total=num_iterations) as pbar:
         
         loss += torch.sum((rendered_images_sil[0, ..., 3] - transformer.image_ref) ** 2)
         loss += torch.sum((rendered_images_rgb[0, ..., :3] - transformer.image_ref_rgb) ** 2)
-        #loss += chamfer_distance(sample_points_from_meshes(meshes_transformed, 5000), tgt_points)[0]
+        loss += chamfer_distance(sample_points_from_meshes(meshes_transformed, 5000), tgt_points)[0]
         loss += (1. - ms_ssim_silhoutte(rendered_images_sil[..., 3].unsqueeze(-1).permute(0, 3, 1, 2), transformer.image_ref.unsqueeze(0).unsqueeze(-1).permute(0, 3, 1, 2))) 
         loss += (1. - ms_ssim_rgb(rendered_images_rgb[..., :3].permute(0, 3, 1, 2), transformer.image_ref_rgb.unsqueeze(0).permute(0, 3, 1, 2))) 
         loss += mesh_laplacian_smoothing(meshes_transformed)
         loss += mesh_edge_loss(meshes_transformed)
         loss += mesh_normal_consistency(meshes_transformed)
-        #loss += point_mesh_edge_distance(meshes_transformed, tgt_point_cloud)
-        #loss += point_mesh_face_distance(meshes_transformed, tgt_point_cloud)
+        loss += point_mesh_edge_distance(meshes_transformed, tgt_point_cloud)
+        loss += point_mesh_face_distance(meshes_transformed, tgt_point_cloud)
         
         # Compute loss and perform backpropagation
         loss.backward(retain_graph=True)
@@ -231,9 +228,10 @@ with tqdm(total=num_iterations) as pbar:
         #for param in optimizer.param_groups:
         if (i+1) == num_iterations//2:  #and param['name'] in ['scale']:
             #param['lr'] = 0.005
-            scale_gradients(transformer.scale, 1.0)
-            scale_gradients(transformer.rotate_6d, 0.0)
-            scale_gradients(transformer.translate, 0.0)
+            pass
+            # scale_gradients(transformer.scale, 1.0)
+            # scale_gradients(transformer.rotate_6d, 0.0)
+            # scale_gradients(transformer.translate, 0.0)
         # 
         if loss.item() < min_loss:
             min_loss = loss.item()

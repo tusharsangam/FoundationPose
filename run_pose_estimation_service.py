@@ -11,7 +11,11 @@ from estimater import *
 from spotsim2realdatareader import *
 import zmq
 
-mesh_path = "/home/tushar/Desktop/bottlenerfstudio/exports/mesh/edited/mesh.obj"
+#mesh_path = "/home/tushar/Desktop/penguine_nerf/exports/mesh/edited/mesh.obj"
+#mesh_path = "/home/tushar/Desktop/bottle_nerf/exports/mesh/edited/mesh.obj"
+mesh_dir = "./meshes"
+mesh_folder_paths = os.listdir(mesh_dir)
+mesh_folder_paths = [os.path.join(mesh_dir, object_name) for object_name  in mesh_folder_paths]
 
 if __name__=='__main__':
   code_dir = os.path.dirname(os.path.realpath(__file__))
@@ -19,20 +23,20 @@ if __name__=='__main__':
 
   est_refine_iter = 5
   track_refine_iter = 2
-  debug = 3
+  debug = 0
   debug_dir = "debug"
 
   set_logging_format()
   set_seed(0)
-
-  mesh = trimesh.load(mesh_path)
-
   
+
   os.system(f'rm -rf {debug_dir}/* && mkdir -p {debug_dir}/track_vis {debug_dir}/ob_in_cam')
 
+  mesh_path = os.path.join(mesh_folder_paths[0], "mesh.obj")
+  mesh = trimesh.load(mesh_path)
   to_origin, extents = trimesh.bounds.oriented_bounds(mesh)
   bbox = np.stack([-extents/2, extents/2], axis=0).reshape(2,3)
-
+  
   scorer = ScorePredictor()
   refiner = PoseRefinePredictor()
   glctx = dr.RasterizeCudaContext()
@@ -47,8 +51,20 @@ if __name__=='__main__':
   while True:
       # rgb_image, raw_depth, mask, K
       req_data = socket.recv_pyobj()
-      if len(req_data) == 6: 
+      if len(req_data) == 8: 
         est_refine_iter, track_refine_iter = req_data[-2], req_data[-1]
+      if len(req_data) > 4:
+        #TODO: Select mesh & its scaling factor based on these parameters
+        image_src, object_name = req_data[4], req_data[5]
+        for mesh_folder_path in mesh_folder_paths:
+          if mesh_folder_path.split("/")[-1] in object_name:
+            break
+        mesh_path = os.path.join(mesh_folder_path, "mesh.obj")
+        mesh = trimesh.load(mesh_path)
+        to_origin, extents = trimesh.bounds.oriented_bounds(mesh)
+        bbox = np.stack([-extents/2, extents/2], axis=0).reshape(2,3)
+        est.reset_object(mesh.vertices, mesh.vertex_normals, mesh=mesh)
+
       reader = YcbineoatReaderModified(req_data, shorter_side=None, zfar=np.inf)
       
       start_time = time.time()
@@ -75,11 +91,11 @@ if __name__=='__main__':
         os.makedirs(f'{reader.video_dir}/ob_in_cam', exist_ok=True)
         np.savetxt(f'{reader.video_dir}/ob_in_cam/{reader.id_strs[i]}.txt', pose.reshape(4,4))
 
-        if debug>=1:
+        if True:
           center_pose = pose@np.linalg.inv(to_origin)
           vis = draw_posed_3d_box(reader.K, img=color, ob_in_cam=center_pose, bbox=bbox)
           vis = draw_xyz_axis(color, ob_in_cam=center_pose, scale=0.1, K=reader.K, thickness=3, transparency=0, is_input_rgb=True)
-          cv2.imwrite('1.png', vis[...,::-1])
+          #cv2.imwrite('1.png', vis[...,::-1])
           #cv2.waitKey(1)
 
 

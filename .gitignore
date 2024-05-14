@@ -6,6 +6,7 @@ exp/
 *$py.class
 # C extensions
 *.so
+*.png
 BundleTrack/build
 # Distribution / packaging
 .Python
@@ -13,6 +14,7 @@ foundationpose/
 build/
 develop-eggs/
 *.zip
+meshes/*
 demo_data/*
 dist/
 # *.png
