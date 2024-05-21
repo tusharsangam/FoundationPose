@@ -49,7 +49,7 @@ else:
 
 # Assuming camera intrinsics matrix 'K' and pose matrix 'pose' are given
 # Example camera intrinsics and pose (adjust according to your data)
-root_folder_path = "../demo_data/penguine"
+root_folder_path = "../demo_data/cup_scan_anchor_intel"
 intrinsic_path = osp.join(root_folder_path, "cam_K.txt")
 
 K_3x3 = np.loadtxt(intrinsic_path)  # fx, fy, cx, cy should be provided
@@ -64,11 +64,11 @@ px, py = K_3x3[0, 2], K_3x3[1, 2]
 #                                     fx, fy, px, py
 #                                      )
 
-lookAT, elev, mesh_centroid, target_rgb, target_silhoutte, tgt_point_cloud = read_data(
+dist, elev, mesh_centroid, target_rgb, target_silhoutte, tgt_point_cloud = read_data(
                                     osp.join(root_folder_path, "depth", f"{str('0').zfill(5)}.png"),
                                     osp.join(root_folder_path, "masks", f"{str('0').zfill(5)}.png"),
                                     osp.join(root_folder_path, "rgb", f"{str('0').zfill(5)}.png"),
-                                    osp.join("../demo_data/cup_scan_anchor_intel", "body_T_intel.txt"),
+                                    osp.join(root_folder_path, "body_T_intel.txt"),
                                     fx, fy, px, py
                                      )
 
@@ -108,7 +108,8 @@ lights = PointLights(device=device, location=[[0.0, 0.0, 0.0]])
 #elev, azim = compute_elevation_azimuth(*eye_in_gl[0])
 
 #R, T = look_at_view_transform(eye=[]) eye=torch.tensor([[0., 0., 0.]]).float(),
-R, T = look_at_view_transform(eye=torch.tensor([[0., 0., 0.]]).float(), at=torch.from_numpy(lookAT).float(), elev=elev, degrees=True)
+R, T = look_at_view_transform(dist=dist, elev=elev, azim=0, degrees=True)
+#R, T = look_at_view_transform(eye=torch.tensor([[0., 0., 0.]]).float(), at=torch.from_numpy(lookAT).float(), elev=elev, degrees=True)
 print(f"Euler camera angles zyx {R_.from_matrix(R.squeeze().numpy()).as_euler('zyx', True)}")
 cameras = PerspectiveCameras(
                              device=device, R=R, T=T, 
@@ -183,7 +184,7 @@ tgt_points = torch.from_numpy(tgt_point_cloud).to(torch.float32).to(device).resh
 tgt_point_cloud = Pointclouds(tgt_points)
 
 min_loss, good_scale = torch.inf, 1.0
-num_iterations = 200
+num_iterations = 150
 
 text_orig = (50, 50)
 target_rgb_show = (target_rgb.copy()*255.).astype(np.uint8)
@@ -196,9 +197,9 @@ def scale_gradients(parameter, scale):
         return grad * scale
     parameter.register_hook(hook)
 
-# scale_gradients(transformer.rotate_6d, 0.2)
-# scale_gradients(transformer.translate, 0.3)
-# scale_gradients(transformer.scale, 0.5)
+scale_gradients(transformer.rotate_6d, 0.005)
+scale_gradients(transformer.translate, 0.2)
+scale_gradients(transformer.scale, 0.5)
 
 with tqdm(total=num_iterations) as pbar:
     for i in range(num_iterations):  # Example number of iterations
@@ -226,12 +227,12 @@ with tqdm(total=num_iterations) as pbar:
         #scheduler.step()
         
         #for param in optimizer.param_groups:
-        if (i+1) == num_iterations//2:  #and param['name'] in ['scale']:
+        if (i+1) == 50:  #and param['name'] in ['scale']:
             #param['lr'] = 0.005
-            pass
-            # scale_gradients(transformer.scale, 1.0)
-            # scale_gradients(transformer.rotate_6d, 0.0)
-            # scale_gradients(transformer.translate, 0.0)
+            #pass
+            scale_gradients(transformer.scale, 1.0)
+            scale_gradients(transformer.rotate_6d, 0.0)
+            scale_gradients(transformer.translate, 0.0)
         # 
         if loss.item() < min_loss:
             min_loss = loss.item()

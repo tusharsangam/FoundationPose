@@ -15,12 +15,12 @@ import argparse
 if __name__=='__main__':
   parser = argparse.ArgumentParser()
   code_dir = os.path.dirname(os.path.realpath(__file__))
-  parser.add_argument('--mesh_file', type=str, default='/home/tushar/Desktop/penguine_nerf/exports/mesh/edited/mesh.obj')
-  parser.add_argument('--test_scene_dir', type=str, default=f'{code_dir}/demo_data/penguine')
+  parser.add_argument('--mesh_file', type=str, default='/home/tushar/Desktop/FoundationPoseForSpotSim2Real/demo_data/bottle_scan_anchor_intel/mesh/scaled_with_pytorch3d/mesh.obj')
+  parser.add_argument('--test_scene_dir', type=str, default=f'{code_dir}/demo_data/bottlevideocloser')
   parser.add_argument('--est_refine_iter', type=int, default=5)
   parser.add_argument('--track_refine_iter', type=int, default=2)
-  parser.add_argument('--debug', type=int, default=3)
-  parser.add_argument('--debug_dir', type=str, default=f'{code_dir}/penguine/debug')
+  parser.add_argument('--debug', type=int, default=1)
+  parser.add_argument('--debug_dir', type=str, default=f'{code_dir}/demo_data/bottlevideocloser/debug')
   args = parser.parse_args()
 
   set_logging_format()

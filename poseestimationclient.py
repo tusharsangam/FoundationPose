@@ -183,7 +183,7 @@ if __name__ == "__main__":
     from perception_and_utils.utils.generic_utils import map_user_input_to_boolean
     #load static data
     #data_root_path = "/fsx-siro/sangamtushar/FoundationPose/demo_data/bottleposevideo"
-    data_root_path = "./demo_data/cup_scan_anchor_intel"
+    data_root_path = "./demo_data/bottle_scan_anchor_intel"
     intrinsics = [
         383.2665100097656,
         383.2665100097656,
@@ -209,7 +209,7 @@ if __name__ == "__main__":
         rgb_image = cv2.imread(osp.join(data_root_path, "rgb", rgb_file_name))
         mask_image_file_name = osp.join(data_root_path, "masks", rgb_file_name)
         try:
-            mask_image = get_mask(rgb_image, None, "cup", "cuda")
+            mask_image = get_mask(rgb_image, None, "bottle", "cuda")
             cv2.imshow("Mask", mask_image)
             cv2.waitKey(1)
             save_or_not = map_user_input_to_boolean("Save this image ?")

@@ -148,7 +148,7 @@ def generate_point_cloud(
     colors = image[rows, cols].reshape(-1, 3) / 255.0
     colors = colors[valid_depth_indices][..., ::-1]
     points_3D[:, 1] *= -1.0
-    points_3D[:, 0]*= -1.0
+    points_3D[:, -1]*= -1.0
     # points_3D[:, 0] *= -1.0
     # points_3D[:, 1]*= -1.0
     #plot_pointcloud(points_3D, "tgt_pointcloud")
@@ -184,7 +184,7 @@ def read_data(depth_path, object_mask_path, rgb_image_path, body_T_intel_path, f
     point_close_to_zero = point_cloud_all[index_close_to_zero].copy()
     #reverse transform for create pointcloud transform
     point_close_to_zero[1] *= -1.
-    point_close_to_zero[0] *= -1.
+    point_close_to_zero[-1] *= -1.
     point_close_to_zero = point_close_to_zero.reshape(1, 3)
     #print(point_close_to_zero, dist_close_to_zero)
     point_close_to_zero_in_image = project_3d_to_pixel_uv(point_close_to_zero, fx, fy, px, py)[0]
@@ -193,23 +193,20 @@ def read_data(depth_path, object_mask_path, rgb_image_path, body_T_intel_path, f
             rgb_image_view, (int(point_close_to_zero_in_image[0]), int(point_close_to_zero_in_image[1])), 2, (0, 0, 255)
         )
     cv2.imwrite("worldorigin.png", rgb_image_view)
-    try:
-        body_T_gripper = torch.from_numpy(np.loadtxt(body_T_intel_path))
-        point_close_to_zero_in_body = Transform3d(matrix=body_T_gripper.T).transform_points(torch.from_numpy(point_close_to_zero))[0].numpy()
-        intel_cam_origin_in_body = Transform3d(matrix=body_T_gripper.T).transform_points(torch.zeros((1, 3), dtype=torch.double))[0].numpy()
-        
-        camera_height_from_origin = intel_cam_origin_in_body[-1] - point_close_to_zero_in_body[-1]
-        camera_diag_distance_from_world_origin = point_close_to_zero[0][-1]
-        camera_dist_to_origin = np.sqrt(np.square(camera_diag_distance_from_world_origin) - np.square(camera_height_from_origin))
-        elev = np.rad2deg(np.arctan(camera_height_from_origin/camera_dist_to_origin))
-    except:
-        elev = None
-    
-    cam_look_at = point_close_to_zero.copy()
-    cam_look_at[0, 0] *= -1.
-    cam_look_at[0, 1] *= -1.
-
+    #point_close_to_zero[1] *= -1.
+    #point_close_to_zero[-1] *= -1.
    
+    body_T_gripper = torch.from_numpy(np.loadtxt(body_T_intel_path))
+    point_close_to_zero_in_body = Transform3d(matrix=body_T_gripper.T).transform_points(torch.from_numpy(point_close_to_zero.copy()))[0].numpy()
+    intel_cam_origin_in_body = Transform3d(matrix=body_T_gripper.T).transform_points(torch.zeros((1, 3), dtype=torch.double))[0].numpy()
+    
+    camera_height_from_origin = intel_cam_origin_in_body[-1] - point_close_to_zero_in_body[-1]
+    camera_diag_distance_from_world_origin = np.abs(point_close_to_zero[0][-1])
+    camera_dist_to_origin = np.sqrt(np.square(camera_diag_distance_from_world_origin) - np.square(camera_height_from_origin))
+    elev = np.rad2deg(np.arctan2(camera_height_from_origin, camera_dist_to_origin))
+    print(f"Height of camera from origin {camera_height_from_origin}, dist on z {camera_dist_to_origin}")
+    
+    
     object_mask = cv2.imread(object_mask_path)
     object_mask = np.where(object_mask > 0, 1, 0)
     depth_image_masked = depth_image*object_mask[..., 0].astype(depth_image.dtype)
@@ -235,8 +232,10 @@ def read_data(depth_path, object_mask_path, rgb_image_path, body_T_intel_path, f
     # Get 3D point
     X = (cx - px) * Z / fx
     Y = (cy - py) * Z / fy
-    point_at_center_in_camera_frame = np.array([X, Y, Z], dtype=np.float32)
-    mesh_centroid = np.array([-1*point_at_center_in_camera_frame[0], -1*point_at_center_in_camera_frame[1], point_at_center_in_camera_frame[-1]]).reshape(1, 3)
+    
+    point_at_object_center_in_camera = np.array([X, Y, Z], dtype=np.float32)
+    mesh_centroid_in_new_origin = point_at_object_center_in_camera - point_close_to_zero[0]
+    mesh_centroid = np.array([mesh_centroid_in_new_origin[0], -1*mesh_centroid_in_new_origin[1], -1*mesh_centroid_in_new_origin[-1]]).reshape(1, 3)
     
     
     points_3d = generate_point_cloud(cv2.imread(rgb_image_path), 
@@ -245,7 +244,7 @@ def read_data(depth_path, object_mask_path, rgb_image_path, body_T_intel_path, f
                                      fx, fy, px, py)
     
     
-    return cam_look_at, elev, mesh_centroid, rgb_image, object_mask[..., 0], points_3d
+    return camera_diag_distance_from_world_origin, elev, mesh_centroid, rgb_image, object_mask[..., 0], points_3d
 
 
 def read_data_bck(depth_path, object_mask_path, rgb_image_path, fx, fy, px, py):
@@ -362,7 +361,7 @@ class MeshTransformer(torch.nn.Module):
     def initial_correction_transformation(self, mesh_centroid):
         
         #Orient the object upside down to reduce rotation parameter stress
-        angles = np.deg2rad([90, 0, 0])
+        angles = np.deg2rad([90, 180, 0])
         initial_rotation = euler_angles_to_matrix(torch.from_numpy(angles).reshape(1, 3), "XYZ").to(self.meshes.device)
         transformed_verts = Transform3d().rotate(initial_rotation).to(self.meshes.device).transform_points(self.meshes.verts_padded())
         self.meshes = self.meshes.update_padded(transformed_verts)
