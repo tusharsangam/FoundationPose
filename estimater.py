@@ -77,6 +77,36 @@ class FoundationPose:
 
     logging.info("reset done")
 
+  def reset_object_fast(self, mesh_ori=None, mesh=None, model_center=None, symmetry_tfs=None, diameter=None, max_xyz=None, min_xyz=None, pts=None, normals=None, mesh_path=None, mesh_tensors=None):
+    
+    self.model_center = model_center
+    
+    self.mesh_ori = mesh_ori
+    
+    self.diameter = diameter
+    self.vox_size = max(self.diameter/20.0, 0.003)
+    logging.info(f'self.diameter:{self.diameter}, vox_size:{self.vox_size}')
+    self.dist_bin = self.vox_size/2
+    self.angle_bin = 20  # Deg
+    
+    
+    self.max_xyz = max_xyz
+    self.min_xyz = min_xyz
+
+    self.pts = pts
+    self.normals = normals
+    logging.info(f'self.pts:{self.pts.shape}')
+    
+    self.mesh_path = mesh_path
+    self.mesh = mesh
+    self.mesh_tensors = mesh_tensors
+
+    if symmetry_tfs is None:
+      self.symmetry_tfs = torch.eye(4).float().cuda()[None]
+    else:
+      self.symmetry_tfs = torch.as_tensor(symmetry_tfs, device='cuda', dtype=torch.float)
+
+    logging.info("reset done")
 
 
   def get_tf_to_centered_mesh(self):
