@@ -1,0 +1,1 @@
+# Mesh rescaling is required as meshes are maded from iphone camera while pose estimation is being used with either intel or gripper camera

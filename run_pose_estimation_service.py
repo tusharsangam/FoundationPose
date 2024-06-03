@@ -11,10 +11,17 @@ from estimater import *
 from spotsim2realdatareader import *
 import zmq
 from tqdm import tqdm
+from yacs.config import CfgNode as CN
 
 #mesh_path = "/home/tushar/Desktop/penguine_nerf/exports/mesh/edited/mesh.obj"
 #mesh_path = "/home/tushar/Desktop/bottle_nerf/exports/mesh/edited/mesh.obj"
-mesh_dir = "./meshes"
+mesh_dir = "../../spot_rl_experiments/weights/mesh"
+config_path = "../../spot_rl_experiments/configs/config.yaml"
+cn = CN()
+cn.set_new_allowed(True)
+cn.merge_from_file(config_path)
+POSE_PORT = cn.POSE_PORT
+
 mesh_folder_paths = os.listdir(mesh_dir)
 mesh_folder_paths = [os.path.join(mesh_dir, object_name) for object_name in mesh_folder_paths]
 
@@ -79,11 +86,11 @@ if __name__=='__main__':
   est = FoundationPose(model_pts=mesh.vertices, model_normals=mesh.vertex_normals, mesh=mesh, scorer=scorer, refiner=refiner, debug_dir=debug_dir, debug=debug, glctx=glctx)
   logging.info("estimator initialization done")
 
-  port = 2100
+  #port = 2100
   context = zmq.Context()
   socket = context.socket(zmq.REP)
-  socket.bind(f"tcp://*:{port}")
-  print(f"Pose Estimation Server Listening on port {port}")
+  socket.bind(f"tcp://*:{POSE_PORT}")
+  print(f"Pose Estimation Server Listening on port {POSE_PORT}")
   while True:
       # rgb_image, raw_depth, mask, K
       req_data = socket.recv_pyobj()
