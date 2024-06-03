@@ -1,0 +1,2 @@
+source activate foundationpose
+CUDA_VISIBLE_DEVICES=1 python run_pose_estimation_service.py
