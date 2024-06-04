@@ -75,7 +75,6 @@ weights/
 .hypothesis/
 .pytest_cache/
 *.pth
-weights/
 # Translations
 *.mo
 *.pot
