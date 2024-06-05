@@ -178,33 +178,22 @@ def read_data(depth_path, object_mask_path, rgb_image_path, body_T_intel_path, f
     assert osp.exists(object_mask_path), f"{object_mask_path} doesn't exists"
     assert osp.exists(rgb_image_path), f"{object_mask_path} doesn't exists"
     depth_image = cv2.imread(depth_path, -1)
-    point_cloud_all = generate_point_cloud(cv2.imread(rgb_image_path), depth_image, np.ones((480, 640), dtype=np.uint8), fx, fy, px, py)
-    dist_to_zero = np.sqrt(np.square(point_cloud_all[:, 0] - 0.) + np.square(point_cloud_all[:, 1] - 0.))
-    dist_close_to_zero, index_close_to_zero = dist_to_zero.min(), np.argmin(dist_to_zero)
-    point_close_to_zero = point_cloud_all[index_close_to_zero].copy()
-    #reverse transform for create pointcloud transform
-    point_close_to_zero[1] *= -1.
-    point_close_to_zero[-1] *= -1.
-    point_close_to_zero = point_close_to_zero.reshape(1, 3)
-    #print(point_close_to_zero, dist_close_to_zero)
-    point_close_to_zero_in_image = project_3d_to_pixel_uv(point_close_to_zero, fx, fy, px, py)[0]
-    rgb_image_view = cv2.imread(rgb_image_path).copy()
-    rgb_image_view = cv2.circle(
-            rgb_image_view, (int(point_close_to_zero_in_image[0]), int(point_close_to_zero_in_image[1])), 2, (0, 0, 255)
-        )
-    cv2.imwrite("worldorigin.png", rgb_image_view)
+    # point_cloud_all = generate_point_cloud(cv2.imread(rgb_image_path), depth_image, np.ones((480, 640), dtype=np.uint8), fx, fy, px, py)
+    # dist_to_zero = np.sqrt(np.square(point_cloud_all[:, 0] - 0.) + np.square(point_cloud_all[:, 1] - 0. + np.square(point_cloud_all[:, -1] - 0.)))
+    # dist_close_to_zero, index_close_to_zero = dist_to_zero.min(), np.argmin(dist_to_zero)
+    # point_close_to_zero = point_cloud_all[index_close_to_zero].copy()
+    # #reverse transform for create pointcloud transform
+    # point_close_to_zero[1] *= -1.
+    # point_close_to_zero[-1] *= -1.
+    # point_close_to_zero = point_close_to_zero.reshape(1, 3)
+    # #print(point_close_to_zero, dist_close_to_zero)
+    # point_close_to_zero_in_image = project_3d_to_pixel_uv(point_close_to_zero, fx, fy, px, py)[0]
+    
     #point_close_to_zero[1] *= -1.
     #point_close_to_zero[-1] *= -1.
    
     body_T_gripper = torch.from_numpy(np.loadtxt(body_T_intel_path))
-    point_close_to_zero_in_body = Transform3d(matrix=body_T_gripper.T).transform_points(torch.from_numpy(point_close_to_zero.copy()))[0].numpy()
-    intel_cam_origin_in_body = Transform3d(matrix=body_T_gripper.T).transform_points(torch.zeros((1, 3), dtype=torch.double))[0].numpy()
     
-    camera_height_from_origin = intel_cam_origin_in_body[-1] - point_close_to_zero_in_body[-1]
-    camera_diag_distance_from_world_origin = np.abs(point_close_to_zero[0][-1])
-    camera_dist_to_origin = np.sqrt(np.square(camera_diag_distance_from_world_origin) - np.square(camera_height_from_origin))
-    elev = np.rad2deg(np.arctan2(camera_height_from_origin, camera_dist_to_origin))
-    print(f"Height of camera from origin {camera_height_from_origin}, dist on z {camera_dist_to_origin}")
     
     
     object_mask = cv2.imread(object_mask_path)
@@ -233,10 +222,22 @@ def read_data(depth_path, object_mask_path, rgb_image_path, body_T_intel_path, f
     X = (cx - px) * Z / fx
     Y = (cy - py) * Z / fy
     
-    point_at_object_center_in_camera = np.array([X, Y, Z], dtype=np.float32)
-    mesh_centroid_in_new_origin = point_at_object_center_in_camera - point_close_to_zero[0]
-    mesh_centroid = np.array([mesh_centroid_in_new_origin[0], -1*mesh_centroid_in_new_origin[1], -1*mesh_centroid_in_new_origin[-1]]).reshape(1, 3)
+    point_at_object_center_in_camera = np.array([X, Y, Z], dtype=np.float32).reshape(1, 3)
+    point_at_object_center_in_body = Transform3d(matrix=body_T_gripper.T).transform_points(torch.from_numpy(point_at_object_center_in_camera.copy()).double() )[0].numpy()
+    intel_cam_origin_in_body = Transform3d(matrix=body_T_gripper.T).transform_points(torch.zeros((1, 3), dtype=torch.double))[0].numpy()
     
+    camera_height_from_origin = intel_cam_origin_in_body[-1] - point_at_object_center_in_body[-1]
+    camera_diag_distance_from_object_center = np.sqrt(np.sum(np.square(intel_cam_origin_in_body - point_at_object_center_in_body)))
+    camera_dist_to_origin = np.sqrt(np.square(camera_diag_distance_from_object_center) - np.square(camera_height_from_origin))
+    elev = np.rad2deg(np.arctan2(camera_height_from_origin, camera_dist_to_origin))
+    print(f"Height of camera from origin {camera_height_from_origin}, dist on z {camera_dist_to_origin}, elev {np.rad2deg(elev)}")
+    #mesh_centroid_in_new_origin = point_at_object_center_in_camera - point_close_to_zero[0]
+    mesh_centroid = np.array([0, 0, 0]).reshape(1, 3)
+    rgb_image_view = cv2.imread(rgb_image_path).copy()
+    rgb_image_view = cv2.circle(
+            rgb_image_view, (int(cx), int(cy)), 3, (0, 0, 255)
+        )
+    cv2.imwrite("objectcenter.png", rgb_image_view)
     
     points_3d = generate_point_cloud(cv2.imread(rgb_image_path), 
                                      cv2.imread(depth_path, -1), 
@@ -244,7 +245,7 @@ def read_data(depth_path, object_mask_path, rgb_image_path, body_T_intel_path, f
                                      fx, fy, px, py)
     
     
-    return camera_diag_distance_from_world_origin, elev, mesh_centroid, rgb_image, object_mask[..., 0], points_3d
+    return camera_diag_distance_from_object_center, elev, mesh_centroid, rgb_image, object_mask[..., 0], points_3d
 
 
 def read_data_bck(depth_path, object_mask_path, rgb_image_path, fx, fy, px, py):

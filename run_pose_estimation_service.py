@@ -100,9 +100,12 @@ if __name__=='__main__':
         #TODO: Select mesh & its scaling factor based on these parameters
         image_src, object_name = req_data[4], req_data[5]
         for mesh_folder_path in mesh_folder_paths:
-          if mesh_folder_path.split("/")[-1] in object_name:
-            mesh_vals = meshes_memory_cache[mesh_folder_path.split("/")[-1]]
-            break
+          object_name_in_mesh_folder = mesh_folder_path.split("/")[-1]
+          if object_name_in_mesh_folder in object_name:
+            object_name_in_mesh_folder, image_src_mesh = object_name_in_mesh_folder.split("_")
+            if int(image_src_mesh) == int(image_src):
+              mesh_vals = meshes_memory_cache[f"{object_name_in_mesh_folder}_{image_src}"]
+              break
         # mesh_path = os.path.join(mesh_folder_path, "mesh.obj")
         # mesh = trimesh.load(mesh_path)
         # to_origin, extents = trimesh.bounds.oriented_bounds(mesh)

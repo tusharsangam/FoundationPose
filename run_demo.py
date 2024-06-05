@@ -15,12 +15,12 @@ import argparse
 if __name__=='__main__':
   parser = argparse.ArgumentParser()
   code_dir = os.path.dirname(os.path.realpath(__file__))
-  parser.add_argument('--mesh_file', type=str, default=f'{code_dir}/demo_data/mustard0/mesh/textured_simple.obj')
-  parser.add_argument('--test_scene_dir', type=str, default=f'{code_dir}/demo_data/mustard0')
+  parser.add_argument('--mesh_file', type=str, default=f'{code_dir}/demo_data/penguin_scan_anchor_gripper/mesh/mesh_spot_gripper/mesh.obj')
+  parser.add_argument('--test_scene_dir', type=str, default=f'{code_dir}/demo_data/penguin_scan_anchor_gripper')
   parser.add_argument('--est_refine_iter', type=int, default=5)
   parser.add_argument('--track_refine_iter', type=int, default=2)
-  parser.add_argument('--debug', type=int, default=3)
-  parser.add_argument('--debug_dir', type=str, default=f'{code_dir}/demo_data/mustard0/debug')
+  parser.add_argument('--debug', type=int, default=1)
+  parser.add_argument('--debug_dir', type=str, default=f'{code_dir}/demo_data/penguin_scan_anchor_gripper/debug')
   args = parser.parse_args()
 
   set_logging_format()
@@ -69,7 +69,7 @@ if __name__=='__main__':
     os.makedirs(f'{reader.video_dir}/ob_in_cam', exist_ok=True)
     np.savetxt(f'{reader.video_dir}/ob_in_cam/{reader.id_strs[i]}.txt', pose.reshape(4,4))
 
-    if debug>=1:
+    if True:
       center_pose = pose@np.linalg.inv(to_origin)
       vis = draw_posed_3d_box(reader.K, img=color, ob_in_cam=center_pose, bbox=bbox)
       vis = draw_xyz_axis(color, ob_in_cam=center_pose, scale=0.1, K=reader.K, thickness=3, transparency=0, is_input_rgb=True)
@@ -77,7 +77,7 @@ if __name__=='__main__':
       cv2.waitKey(1)
 
 
-    if debug>=2:
+    if True:
       os.makedirs(f'{reader.video_dir}/track_vis', exist_ok=True)
       imageio.imwrite(f'{reader.video_dir}/track_vis/{reader.id_strs[i]}.png', vis)
 

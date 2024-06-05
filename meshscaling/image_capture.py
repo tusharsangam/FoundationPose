@@ -5,11 +5,11 @@ import rospy
 from spot_rl.envs.skill_manager import SpotSkillManager
 from copy import deepcopy
 
-cam_device = "intel"
+cam_device = "gripper"
 cam_index = 1 if cam_device == "intel" else 0
-save_name_path = f"bottle_scan_anchor_{cam_device}"
+save_name_path = f"penguin_scan_anchor_{cam_device}"
 
-path_to_save = f"/home/tushar/Desktop/FoundationPose/demo_data/{save_name_path}"
+path_to_save = f"../demo_data/{save_name_path}"
 path_to_gripper_T_intel = "/home/tushar/Desktop/spot-sim2real/spot_rl_experiments/spot_rl/utils/gripper_T_intel.npy"
 def record_transform(spot:Spot):
     rospy.set_param("is_gripper_blocked", cam_index)
@@ -30,15 +30,8 @@ def record_transform(spot:Spot):
 
     tree = image_resps_gripper[0].shot.transforms_snapshot
     hand_T_gripper:mn.Matrix4 = spot.get_magnum_Matrix4_spot_a_T_b("arm0.link_wr1", "hand_color_image_sensor", tree)
-    gripper_T_intel:mn.Matrix4 = mn.Matrix4(np.load(path_to_gripper_T_intel))
+    gripper_T_intel:mn.Matrix4 = mn.Matrix4(np.load(path_to_gripper_T_intel)) if cam_index == 1 else mn.Matrix4(np.eye(4))
 
-    vision_T_hand:mn.Matrix4 = spot.get_magnum_Matrix4_spot_a_T_b("vision", "link_wr1")
-    
-    vision_T_intel = vision_T_hand@(hand_T_gripper@gripper_T_intel)
-    transform:np.ndarray = np.array(vision_T_intel)
-    transform_save_path = osp.join(path_to_save, "vision_T_intel.txt")
-    np.savetxt(transform_save_path, transform)
-    
     body_T_hand:mn.Matrix4 = spot.get_magnum_Matrix4_spot_a_T_b("body", "link_wr1")
     body_T_intel = body_T_hand@(hand_T_gripper@gripper_T_intel)
     transform:np.ndarray = np.array(body_T_intel)
@@ -48,16 +41,16 @@ def record_transform(spot:Spot):
     rospy.set_param("is_gripper_blocked", cam_index)
 
 if __name__ == "__main__":
-    try:
-        shutil.rmtree(path_to_save)
-    except:
-        pass
+    # try:
+    #     shutil.rmtree(path_to_save)
+    # except:
+    #     pass
     os.makedirs(path_to_save, exist_ok=True)
     spot_skill_manager = SpotSkillManager()
     spot_skill_manager.spot.stand()
     spot_skill_manager.spot.open_gripper()
     gaz_arm_angles = deepcopy(spot_skill_manager.pick_config.GAZE_ARM_JOINT_ANGLES)
-    gaz_arm_angles[-2] = 75
+    gaz_arm_angles[-2] = 75 if cam_index == 1 else gaz_arm_angles[-2]
     spot_skill_manager.spot.set_arm_joint_positions(np.deg2rad(gaz_arm_angles), 1)
     
     spot = spot_skill_manager.spot
