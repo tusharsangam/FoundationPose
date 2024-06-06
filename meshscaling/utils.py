@@ -226,11 +226,12 @@ def read_data(depth_path, object_mask_path, rgb_image_path, body_T_intel_path, f
     point_at_object_center_in_body = Transform3d(matrix=body_T_gripper.T).transform_points(torch.from_numpy(point_at_object_center_in_camera.copy()).double() )[0].numpy()
     intel_cam_origin_in_body = Transform3d(matrix=body_T_gripper.T).transform_points(torch.zeros((1, 3), dtype=torch.double))[0].numpy()
     
-    camera_height_from_origin = intel_cam_origin_in_body[-1] - point_at_object_center_in_body[-1]
-    camera_diag_distance_from_object_center = np.sqrt(np.sum(np.square(intel_cam_origin_in_body - point_at_object_center_in_body)))
-    camera_dist_to_origin = np.sqrt(np.square(camera_diag_distance_from_object_center) - np.square(camera_height_from_origin))
-    elev = np.rad2deg(np.arctan2(camera_height_from_origin, camera_dist_to_origin))
-    print(f"Height of camera from origin {camera_height_from_origin}, dist on z {camera_dist_to_origin}, elev {np.rad2deg(elev)}")
+    dist, azimuth_deg, elev_deg = calculate_distance_azimuth_elevation(point_at_object_center_in_body, intel_cam_origin_in_body)
+    # camera_height_from_origin = intel_cam_origin_in_body[-1] - point_at_object_center_in_body[-1]
+    # camera_diag_distance_from_object_center = np.sqrt(np.sum(np.square(intel_cam_origin_in_body - point_at_object_center_in_body)))
+    # camera_dist_to_origin = np.sqrt(np.square(camera_diag_distance_from_object_center) - np.square(camera_height_from_origin))
+    # elev = np.rad2deg(np.arctan2(camera_height_from_origin, camera_dist_to_origin))
+    print(f"Camera to object dist {dist} elev {elev_deg}, azimuth {azimuth_deg}")
     #mesh_centroid_in_new_origin = point_at_object_center_in_camera - point_close_to_zero[0]
     mesh_centroid = np.array([0, 0, 0]).reshape(1, 3)
     rgb_image_view = cv2.imread(rgb_image_path).copy()
@@ -245,7 +246,7 @@ def read_data(depth_path, object_mask_path, rgb_image_path, body_T_intel_path, f
                                      fx, fy, px, py)
     
     
-    return camera_diag_distance_from_object_center, elev, mesh_centroid, rgb_image, object_mask[..., 0], points_3d
+    return dist, elev_deg, azimuth_deg, mesh_centroid, rgb_image, object_mask[..., 0], points_3d
 
 
 def read_data_bck(depth_path, object_mask_path, rgb_image_path, fx, fy, px, py):
@@ -297,41 +298,37 @@ def fill_holes(obje_file_path):
     mesh.fill_holes()
     mesh.export(obje_file_path)
 
-def compute_elevation_azimuth(x, y, z):
-    """
-    Compute the elevation and azimuth of a vector given its x, y, z components.
+def calculate_distance_azimuth_elevation(object_center_in_body_frame, camera_position_in_body_frame):
+    object_center = np.array([object_center_in_body_frame[1], object_center_in_body_frame[-1], -1*object_center_in_body_frame[0]])
+    camera_position = np.array([camera_position_in_body_frame[1], camera_position_in_body_frame[-1], -1*camera_position_in_body_frame[0]])
     
-    Args:
-    x (float): X component of the vector.
-    y (float): Y component of the vector.
-    z (float): Z component of the vector.
+    x1, y1, z1 = object_center
+    x2, y2, z2 = camera_position
     
-    Returns:
-    tuple: (elevation, azimuth) in degrees.
-    """
-    # Convert to PyTorch tensors
-    x, y, z = map(torch.tensor, (x, y, z))
+    # Transform camera position to object-centered coordinates
+    camera_rel_to_object = (x2 - x1, y2 - y1, z2 - z1)
     
-    # Calculate the radius
-    r = torch.sqrt(x**2 + y**2 + z**2)
+    # Extract the transformed coordinates
+    x_rel, y_rel, z_rel = camera_rel_to_object
     
-    # Elevation
-    elevation = torch.asin(z / r)
-    elevation = torch.arctan(z/y)
+    # Calculate distance
+    distance = np.sqrt(x_rel**2 + y_rel**2 + z_rel**2)
     
-    # Azimuth
-    azimuth = torch.atan2(y, x)
-    azimuth = torch.arctan(x/y)
+    # Calculate azimuth
+    azimuth = np.arctan2(x_rel, z_rel)
     
-    # Convert from radians to degrees
-    elevation_deg = torch.rad2deg(elevation)
-    azimuth_deg = torch.rad2deg(azimuth)
+    # Calculate elevation
+    elevation = np.arctan2(y_rel, np.sqrt(x_rel**2 + z_rel**2))
     
-    return elevation_deg.item(), azimuth_deg.item()
+    # Convert azimuth and elevation from radians to degrees
+    azimuth_deg = np.degrees(azimuth)
+    elevation_deg = np.degrees(elevation)
+    
+    return distance, azimuth_deg, elevation_deg
 
 from pytorch3d.transforms import euler_angles_to_matrix, matrix_to_rotation_6d, rotation_6d_to_matrix
 class MeshTransformer(torch.nn.Module):
-    def __init__(self, meshes, renderer_silhoutte, rgb_renderer, cameras, lights, image_ref, mesh_centroid):
+    def __init__(self, meshes, renderer_silhoutte, rgb_renderer, cameras, lights, image_ref, initial_translation, initial_rotation):
         super().__init__()
         self.meshes = meshes
         self.device = meshes.device
@@ -351,19 +348,21 @@ class MeshTransformer(torch.nn.Module):
         cv2.imwrite("target_image_rgb.png", (image_ref*255.).astype(np.uint8))
        
         self.scale = torch.nn.Parameter(torch.tensor([1.0]).to(self.meshes.device), requires_grad=True)
-        self.translate = torch.nn.Parameter(torch.tensor([[0.0, 0.0, 0.0]]).to(self.meshes.device), requires_grad=True)
-        self.rotate_6d = matrix_to_rotation_6d(torch.eye(3).reshape(1, 3, 3))
-        self.rotate_6d = torch.nn.Parameter(self.rotate_6d.to(self.meshes.device), requires_grad=True)
+        #self.translate = torch.nn.Parameter(torch.tensor([[0.0, 0.0, 0.0]]).to(self.meshes.device), requires_grad=True)
+        #self.rotate_6d = matrix_to_rotation_6d(torch.eye(3).reshape(1, 3, 3)).float()
+        #self.rotate_6d = torch.nn.Parameter(self.rotate_6d.to(self.meshes.device), requires_grad=True)
+        self.rotate_6d = torch.nn.Parameter(matrix_to_rotation_6d(initial_rotation).clone().float().to(self.device), requires_grad=True)
+        self.translate = torch.nn.Parameter(initial_translation.clone().float().to(self.device), requires_grad=True)
         #self.rotate = torch.nn.Parameter(torch.tensor([[0., 0., 0.]]).to(self.meshes.device), requires_grad=True)
         #self.rotate = torch.nn.Parameter(torch.eye(3).reshape(1, 3, 3).to(self.meshes.device), requires_grad=True)
     
-        self.initial_correction_transformation(mesh_centroid)
+        #self.initial_correction_transformation(initial_translation, initial_rotation)
     
-    def initial_correction_transformation(self, mesh_centroid):
+    def initial_correction_transformation(self, initial_translation, initial_rotation):
         
         #Orient the object upside down to reduce rotation parameter stress
-        angles = np.deg2rad([90, 180, 0])
-        initial_rotation = euler_angles_to_matrix(torch.from_numpy(angles).reshape(1, 3), "XYZ").to(self.meshes.device)
+        #angles = np.deg2rad([90, 180, 0])
+        #initial_rotation = euler_angles_to_matrix(torch.from_numpy(angles).reshape(1, 3), "XYZ").to(self.meshes.device)
         transformed_verts = Transform3d().rotate(initial_rotation).to(self.meshes.device).transform_points(self.meshes.verts_padded())
         self.meshes = self.meshes.update_padded(transformed_verts)
         
@@ -372,7 +371,7 @@ class MeshTransformer(torch.nn.Module):
         # transformed_verts = Transform3d().rotate(initial_rotation).to(self.meshes.device).transform_points(self.meshes.verts_padded())
         # self.meshes = self.meshes.update_padded(transformed_verts)
 
-        transformed_verts = Transform3d().translate(torch.from_numpy(mesh_centroid).reshape(1, 3)).to(self.meshes.device).transform_points(self.meshes.verts_padded())
+        transformed_verts = Transform3d().translate(torch.from_numpy(initial_translation).reshape(1, 3)).to(self.meshes.device).transform_points(self.meshes.verts_padded())
         self.meshes = self.meshes.update_padded(transformed_verts)
         #transformed_verts = Transform3d().translate(-1.*torch.tensor(cam_eye).to(self.meshes.device)).to(self.meshes.device).transform_points(self.meshes.verts_padded())
         #self.meshes = self.meshes.update_padded(transformed_verts)

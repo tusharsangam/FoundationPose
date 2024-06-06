@@ -51,7 +51,7 @@ if __name__ == "__main__":
     spot_skill_manager.spot.open_gripper()
     gaz_arm_angles = deepcopy(spot_skill_manager.pick_config.GAZE_ARM_JOINT_ANGLES)
     gaz_arm_angles[-2] = 75 if cam_index == 1 else gaz_arm_angles[-2]
-    spot_skill_manager.spot.set_arm_joint_positions(np.deg2rad(gaz_arm_angles), 1)
+    #spot_skill_manager.spot.set_arm_joint_positions(np.deg2rad(gaz_arm_angles), 1)
     
     spot = spot_skill_manager.spot
     i = 0

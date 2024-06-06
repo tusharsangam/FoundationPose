@@ -5,6 +5,7 @@ from tqdm import tqdm
 import open3d as o3d
 # Util function for loading meshes
 from pytorch3d.io import load_objs_as_meshes
+from pytorch3d.transforms import euler_angles_to_matrix, rotation_6d_to_matrix
 
 # Data structures and functions for rendering
 from pytorch3d.structures import Meshes, Pointclouds
@@ -64,7 +65,7 @@ px, py = K_3x3[0, 2], K_3x3[1, 2]
 #                                     fx, fy, px, py
 #                                      )
 
-dist, elev, mesh_centroid, target_rgb, target_silhoutte, tgt_point_cloud = read_data(
+dist, elev, azimuth, initial_translation, target_rgb, target_silhoutte, tgt_point_cloud = read_data(
                                     osp.join(root_folder_path, "depth", f"{str('0').zfill(5)}.png"),
                                     osp.join(root_folder_path, "masks", f"{str('0').zfill(5)}.png"),
                                     osp.join(root_folder_path, "rgb", f"{str('0').zfill(5)}.png"),
@@ -105,10 +106,9 @@ num_views = 1
  
 lights = PointLights(device=device, location=[[0.0, 0.0, 0.0]])
 
-#elev, azim = compute_elevation_azimuth(*eye_in_gl[0])
 
 #R, T = look_at_view_transform(eye=[]) eye=torch.tensor([[0., 0., 0.]]).float(),
-R, T = look_at_view_transform(dist=dist, elev=elev, azim=0, degrees=True)
+R, T = look_at_view_transform(dist=dist, elev=elev, azim=azimuth, degrees=True)
 #R, T = look_at_view_transform(eye=torch.tensor([[0., 0., 0.]]).float(), at=torch.from_numpy(lookAT).float(), elev=elev, degrees=True)
 print(f"Euler camera angles zyx {R_.from_matrix(R.squeeze().numpy()).as_euler('zyx', True)}")
 cameras = PerspectiveCameras(
@@ -162,8 +162,10 @@ def close_writers():
 
 atexit.register(close_writers)
 
-
-transformer = MeshTransformer(meshes, renderer_silhouette, renderer, cameras, lights, target_rgb, mesh_centroid).to(device)
+angles = np.deg2rad([90, 180, 0])
+initial_rotation = euler_angles_to_matrix(torch.from_numpy(angles).reshape(1, 3), "XYZ").to(device).float()
+initial_translation = torch.from_numpy(initial_translation).float().reshape(1, 3).to(device)
+transformer = MeshTransformer(meshes, renderer_silhouette, renderer, cameras, lights, target_rgb, initial_translation, initial_rotation).to(device)
 
 
 optimizer = torch.optim.Adam([
@@ -197,16 +199,16 @@ def scale_gradients(parameter, scale):
         return grad * scale
     parameter.register_hook(hook)
 
-scale_gradients(transformer.rotate_6d, 0.005)
-scale_gradients(transformer.translate, 0.2)
+#scale_gradients(transformer.rotate_6d, 0.005)
+#scale_gradients(transformer.translate, 0.2)
 scale_gradients(transformer.scale, 0.5)
-
+reg_loss_weight = 2.5
 with tqdm(total=num_iterations) as pbar:
     for i in range(num_iterations):  # Example number of iterations
         optimizer.zero_grad()
         
         # Apply transformation and render
-        rendered_images_sil, rendered_images_rgb, meshes_transformed = transformer()
+        rendered_images_sil, rendered_images_rgb, meshes_transformed = transformer.forward()
     
         loss = 0.0
         
@@ -221,18 +223,24 @@ with tqdm(total=num_iterations) as pbar:
         loss += point_mesh_edge_distance(meshes_transformed, tgt_point_cloud)
         loss += point_mesh_face_distance(meshes_transformed, tgt_point_cloud)
         
+        reg_loss = torch.nn.functional.mse_loss(rotation_6d_to_matrix(transformer.rotate_6d), initial_rotation)
+        reg_loss += torch.nn.functional.mse_loss(transformer.translate, initial_translation)
+        loss += reg_loss_weight*reg_loss
+        
+        
         # Compute loss and perform backpropagation
         loss.backward(retain_graph=True)
         optimizer.step()
         #scheduler.step()
-        
+        with torch.no_grad():
+            transformer.rotate_6d.data = torch.clamp(transformer.rotate_6d.data, -1.0, 1.0)
         #for param in optimizer.param_groups:
         if (i+1) == 50:  #and param['name'] in ['scale']:
             #param['lr'] = 0.005
             #pass
             scale_gradients(transformer.scale, 1.0)
-            scale_gradients(transformer.rotate_6d, 0.0)
-            scale_gradients(transformer.translate, 0.0)
+            #scale_gradients(transformer.rotate_6d, 0.0)
+            #scale_gradients(transformer.translate, 0.0)
         # 
         if loss.item() < min_loss:
             min_loss = loss.item()
