@@ -7,7 +7,7 @@ from copy import deepcopy
 
 cam_device = "gripper"
 cam_index = 1 if cam_device == "intel" else 0
-save_name_path = f"penguin_scan_anchor_{cam_device}"
+save_name_path = f"cup_test_scans_{cam_device}"
 
 path_to_save = f"../demo_data/{save_name_path}"
 path_to_gripper_T_intel = "/home/tushar/Desktop/spot-sim2real/spot_rl_experiments/spot_rl/utils/gripper_T_intel.npy"
@@ -51,7 +51,7 @@ if __name__ == "__main__":
     spot_skill_manager.spot.open_gripper()
     gaz_arm_angles = deepcopy(spot_skill_manager.pick_config.GAZE_ARM_JOINT_ANGLES)
     gaz_arm_angles[-2] = 75 if cam_index == 1 else gaz_arm_angles[-2]
-    #spot_skill_manager.spot.set_arm_joint_positions(np.deg2rad(gaz_arm_angles), 1)
+    spot_skill_manager.spot.set_arm_joint_positions(np.deg2rad(gaz_arm_angles), 1) if "anchor" not in save_name_path else None
     
     spot = spot_skill_manager.spot
     i = 0

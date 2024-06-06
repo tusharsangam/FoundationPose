@@ -200,9 +200,10 @@ def scale_gradients(parameter, scale):
     parameter.register_hook(hook)
 
 #scale_gradients(transformer.rotate_6d, 0.005)
+#scale_gradients(transformer.rotate_6d, 0.0)
 #scale_gradients(transformer.translate, 0.2)
-scale_gradients(transformer.scale, 0.5)
-reg_loss_weight = 2.5
+#scale_gradients(transformer.scale, 0.)
+reg_loss_weight = 5.0
 with tqdm(total=num_iterations) as pbar:
     for i in range(num_iterations):  # Example number of iterations
         optimizer.zero_grad()
@@ -223,7 +224,8 @@ with tqdm(total=num_iterations) as pbar:
         loss += point_mesh_edge_distance(meshes_transformed, tgt_point_cloud)
         loss += point_mesh_face_distance(meshes_transformed, tgt_point_cloud)
         
-        reg_loss = torch.nn.functional.mse_loss(rotation_6d_to_matrix(transformer.rotate_6d), initial_rotation)
+        reg_loss = 0.0
+        reg_loss += 10*torch.nn.functional.mse_loss(rotation_6d_to_matrix(transformer.rotate_6d), initial_rotation)
         reg_loss += torch.nn.functional.mse_loss(transformer.translate, initial_translation)
         loss += reg_loss_weight*reg_loss
         

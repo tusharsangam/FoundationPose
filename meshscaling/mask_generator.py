@@ -183,8 +183,8 @@ if __name__ == "__main__":
     from perception_and_utils.utils.generic_utils import map_user_input_to_boolean
     #load static data
     #data_root_path = "/fsx-siro/sangamtushar/FoundationPose/demo_data/bottleposevideo"
-    data_root_path = "../demo_data/penguin_scan_anchor_gripper"
-    object_name = "penguin"
+    data_root_path = "../demo_data/cup_test_scans_gripper"
+    object_name = "cup"
     
     rgb_filenames = os.listdir(osp.join(data_root_path, "rgb"))
     rgb_filenames.sort()

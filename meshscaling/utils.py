@@ -178,20 +178,22 @@ def read_data(depth_path, object_mask_path, rgb_image_path, body_T_intel_path, f
     assert osp.exists(object_mask_path), f"{object_mask_path} doesn't exists"
     assert osp.exists(rgb_image_path), f"{object_mask_path} doesn't exists"
     depth_image = cv2.imread(depth_path, -1)
-    # point_cloud_all = generate_point_cloud(cv2.imread(rgb_image_path), depth_image, np.ones((480, 640), dtype=np.uint8), fx, fy, px, py)
-    # dist_to_zero = np.sqrt(np.square(point_cloud_all[:, 0] - 0.) + np.square(point_cloud_all[:, 1] - 0. + np.square(point_cloud_all[:, -1] - 0.)))
-    # dist_close_to_zero, index_close_to_zero = dist_to_zero.min(), np.argmin(dist_to_zero)
-    # point_close_to_zero = point_cloud_all[index_close_to_zero].copy()
-    # #reverse transform for create pointcloud transform
-    # point_close_to_zero[1] *= -1.
-    # point_close_to_zero[-1] *= -1.
-    # point_close_to_zero = point_close_to_zero.reshape(1, 3)
-    # #print(point_close_to_zero, dist_close_to_zero)
-    # point_close_to_zero_in_image = project_3d_to_pixel_uv(point_close_to_zero, fx, fy, px, py)[0]
+    point_cloud_all = generate_point_cloud(cv2.imread(rgb_image_path), depth_image, np.ones((480, 640), dtype=np.uint8), fx, fy, px, py)
+    point_cloud_all[:, 1] *= -1.0
+    point_cloud_all[:, -1]*= -1.0
+    dist_to_zero = np.sqrt(np.square(point_cloud_all[:, 0] - 0.) + np.square(point_cloud_all[:, 1] - 0.))
+    dist_close_to_zero, index_close_to_zero = dist_to_zero.min(), np.argmin(dist_to_zero)
+    point_close_to_zero = point_cloud_all[index_close_to_zero].copy()
     
+    point_close_to_zero_in_image = project_3d_to_pixel_uv(point_close_to_zero.reshape(1, 3), fx, fy, px, py)[0]
+    rgb_image_view = cv2.imread(rgb_image_path).copy()
+    rgb_image_view = cv2.circle(
+            rgb_image_view, (int(point_close_to_zero_in_image[0]), int(point_close_to_zero_in_image[1])), 3, (0, 0, 255)
+        )
+    cv2.imwrite("worldcenter.png", rgb_image_view)
     #point_close_to_zero[1] *= -1.
     #point_close_to_zero[-1] *= -1.
-   
+    dist, azimuth_deg, elev_deg = calculate_distance_azimuth_elevation(point_close_to_zero, np.array([0., 0., 0.]), frame="camera")
     body_T_gripper = torch.from_numpy(np.loadtxt(body_T_intel_path))
     
     
@@ -226,14 +228,14 @@ def read_data(depth_path, object_mask_path, rgb_image_path, body_T_intel_path, f
     point_at_object_center_in_body = Transform3d(matrix=body_T_gripper.T).transform_points(torch.from_numpy(point_at_object_center_in_camera.copy()).double() )[0].numpy()
     intel_cam_origin_in_body = Transform3d(matrix=body_T_gripper.T).transform_points(torch.zeros((1, 3), dtype=torch.double))[0].numpy()
     
-    dist, azimuth_deg, elev_deg = calculate_distance_azimuth_elevation(point_at_object_center_in_body, intel_cam_origin_in_body)
+    #dist, azimuth_deg, elev_deg = calculate_distance_azimuth_elevation(point_at_object_center_in_body, intel_cam_origin_in_body, frame="body")
     # camera_height_from_origin = intel_cam_origin_in_body[-1] - point_at_object_center_in_body[-1]
     # camera_diag_distance_from_object_center = np.sqrt(np.sum(np.square(intel_cam_origin_in_body - point_at_object_center_in_body)))
     # camera_dist_to_origin = np.sqrt(np.square(camera_diag_distance_from_object_center) - np.square(camera_height_from_origin))
     # elev = np.rad2deg(np.arctan2(camera_height_from_origin, camera_dist_to_origin))
     print(f"Camera to object dist {dist} elev {elev_deg}, azimuth {azimuth_deg}")
-    #mesh_centroid_in_new_origin = point_at_object_center_in_camera - point_close_to_zero[0]
-    mesh_centroid = np.array([0, 0, 0]).reshape(1, 3)
+    mesh_centroid_in_new_origin = point_at_object_center_in_camera.flatten() - point_close_to_zero.flatten()
+    mesh_centroid = np.array([-1*mesh_centroid_in_new_origin[0], -1*mesh_centroid_in_new_origin[1], mesh_centroid_in_new_origin[2]]).reshape(1, 3)
     rgb_image_view = cv2.imread(rgb_image_path).copy()
     rgb_image_view = cv2.circle(
             rgb_image_view, (int(cx), int(cy)), 3, (0, 0, 255)
@@ -298,9 +300,13 @@ def fill_holes(obje_file_path):
     mesh.fill_holes()
     mesh.export(obje_file_path)
 
-def calculate_distance_azimuth_elevation(object_center_in_body_frame, camera_position_in_body_frame):
-    object_center = np.array([object_center_in_body_frame[1], object_center_in_body_frame[-1], -1*object_center_in_body_frame[0]])
-    camera_position = np.array([camera_position_in_body_frame[1], camera_position_in_body_frame[-1], -1*camera_position_in_body_frame[0]])
+def calculate_distance_azimuth_elevation(object_center_or_world_center, camera_position, frame="body"):
+    if frame == "body":
+        object_center = np.array([object_center_or_world_center[1], object_center_or_world_center[-1], -1*object_center_or_world_center[0]])
+        camera_position = np.array([camera_position[1], camera_position[-1], -1*camera_position[0]])
+    else:
+        object_center = np.array([object_center_or_world_center[0], -1*object_center_or_world_center[1], -1*object_center_or_world_center[2]])
+        camera_position = np.array([camera_position[0], -1*camera_position[1], -1*camera_position[2]])
     
     x1, y1, z1 = object_center
     x2, y2, z2 = camera_position
@@ -392,7 +398,7 @@ class MeshTransformer(torch.nn.Module):
         #transform3d = Transform3d(matrix=self.transformation_matrix, device=self.meshes.device
         meshes = self.meshes.clone()
         rotation_mat = rotation_6d_to_matrix(self.rotate_6d).to(self.meshes.device)
-        #self.translate[0][0] = 0.0
+        
         transformed_verts = Transform3d().rotate(rotation_mat).translate(self.translate).scale(self.scale).to(self.meshes.device).transform_points(meshes.verts_padded())
         #transformed_verts = Transform3d().scale(self.scale).to(self.meshes.device).transform_points(meshes.verts_padded())
         meshes = meshes.update_padded(transformed_verts)
