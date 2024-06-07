@@ -50,7 +50,7 @@ else:
 
 # Assuming camera intrinsics matrix 'K' and pose matrix 'pose' are given
 # Example camera intrinsics and pose (adjust according to your data)
-root_folder_path = "../demo_data/penguin_scan_anchor_gripper"
+root_folder_path = "../demo_data/cup_rescan_anchor_gripper"
 intrinsic_path = osp.join(root_folder_path, "cam_K.txt")
 
 K_3x3 = np.loadtxt(intrinsic_path)  # fx, fy, cx, cy should be provided
@@ -108,9 +108,8 @@ lights = PointLights(device=device, location=[[0.0, 0.0, 0.0]])
 
 
 #R, T = look_at_view_transform(eye=[]) eye=torch.tensor([[0., 0., 0.]]).float(),
-R, T = look_at_view_transform(dist=dist, elev=elev, azim=azimuth, degrees=True)
+R, T = look_at_view_transform(dist=dist, elev=elev, azim=azimuth, degrees=True, at=torch.tensor([0., 0., 0.5]).reshape(1, 3))
 #R, T = look_at_view_transform(eye=torch.tensor([[0., 0., 0.]]).float(), at=torch.from_numpy(lookAT).float(), elev=elev, degrees=True)
-print(f"Euler camera angles zyx {R_.from_matrix(R.squeeze().numpy()).as_euler('zyx', True)}")
 cameras = PerspectiveCameras(
                              device=device, R=R, T=T, 
                              focal_length=torch.tensor([[fx, fy]]).to(torch.float32), 
@@ -165,6 +164,7 @@ atexit.register(close_writers)
 angles = np.deg2rad([90, 180, 0])
 initial_rotation = euler_angles_to_matrix(torch.from_numpy(angles).reshape(1, 3), "XYZ").to(device).float()
 initial_translation = torch.from_numpy(initial_translation).float().reshape(1, 3).to(device)
+print(f"Initial Translation {initial_translation}")
 transformer = MeshTransformer(meshes, renderer_silhouette, renderer, cameras, lights, target_rgb, initial_translation, initial_rotation).to(device)
 
 
@@ -203,7 +203,7 @@ def scale_gradients(parameter, scale):
 #scale_gradients(transformer.rotate_6d, 0.0)
 #scale_gradients(transformer.translate, 0.2)
 #scale_gradients(transformer.scale, 0.)
-reg_loss_weight = 5.0
+reg_loss_weight = 50.0
 with tqdm(total=num_iterations) as pbar:
     for i in range(num_iterations):  # Example number of iterations
         optimizer.zero_grad()
@@ -215,7 +215,7 @@ with tqdm(total=num_iterations) as pbar:
         
         loss += torch.sum((rendered_images_sil[0, ..., 3] - transformer.image_ref) ** 2)
         loss += torch.sum((rendered_images_rgb[0, ..., :3] - transformer.image_ref_rgb) ** 2)
-        loss += chamfer_distance(sample_points_from_meshes(meshes_transformed, 5000), tgt_points)[0]
+        #loss += chamfer_distance(sample_points_from_meshes(meshes_transformed, 5000), tgt_points)[0]
         loss += (1. - ms_ssim_silhoutte(rendered_images_sil[..., 3].unsqueeze(-1).permute(0, 3, 1, 2), transformer.image_ref.unsqueeze(0).unsqueeze(-1).permute(0, 3, 1, 2))) 
         loss += (1. - ms_ssim_rgb(rendered_images_rgb[..., :3].permute(0, 3, 1, 2), transformer.image_ref_rgb.unsqueeze(0).permute(0, 3, 1, 2))) 
         loss += mesh_laplacian_smoothing(meshes_transformed)
@@ -225,8 +225,8 @@ with tqdm(total=num_iterations) as pbar:
         loss += point_mesh_face_distance(meshes_transformed, tgt_point_cloud)
         
         reg_loss = 0.0
-        reg_loss += 10*torch.nn.functional.mse_loss(rotation_6d_to_matrix(transformer.rotate_6d), initial_rotation)
-        reg_loss += torch.nn.functional.mse_loss(transformer.translate, initial_translation)
+        #reg_loss += 10*torch.nn.functional.mse_loss(rotation_6d_to_matrix(transformer.rotate_6d), initial_rotation)
+        reg_loss += torch.nn.functional.mse_loss(transformer.translate[0, -1], initial_translation[0, -1])
         loss += reg_loss_weight*reg_loss
         
         

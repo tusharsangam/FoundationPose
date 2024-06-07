@@ -147,10 +147,10 @@ def generate_point_cloud(
     print(f"3D point cloud shape {points_3D.shape}")
     colors = image[rows, cols].reshape(-1, 3) / 255.0
     colors = colors[valid_depth_indices][..., ::-1]
-    points_3D[:, 1] *= -1.0
-    points_3D[:, -1]*= -1.0
-    # points_3D[:, 0] *= -1.0
-    # points_3D[:, 1]*= -1.0
+    # points_3D[:, 1] *= -1.0
+    # points_3D[:, -1]*= -1.0
+    points_3D[:, 0] *= -1.0
+    points_3D[:, 1]*= -1.0
     #plot_pointcloud(points_3D, "tgt_pointcloud")
     point_cloud = o3d.geometry.PointCloud()
     point_cloud.points = o3d.utility.Vector3dVector(points_3D)
@@ -180,11 +180,11 @@ def read_data(depth_path, object_mask_path, rgb_image_path, body_T_intel_path, f
     depth_image = cv2.imread(depth_path, -1)
     point_cloud_all = generate_point_cloud(cv2.imread(rgb_image_path), depth_image, np.ones((480, 640), dtype=np.uint8), fx, fy, px, py)
     point_cloud_all[:, 1] *= -1.0
-    point_cloud_all[:, -1]*= -1.0
+    point_cloud_all[:, 0]*= -1.0
     dist_to_zero = np.sqrt(np.square(point_cloud_all[:, 0] - 0.) + np.square(point_cloud_all[:, 1] - 0.))
     dist_close_to_zero, index_close_to_zero = dist_to_zero.min(), np.argmin(dist_to_zero)
     point_close_to_zero = point_cloud_all[index_close_to_zero].copy()
-    
+    print(f"Point close to zero, {point_close_to_zero}")
     point_close_to_zero_in_image = project_3d_to_pixel_uv(point_close_to_zero.reshape(1, 3), fx, fy, px, py)[0]
     rgb_image_view = cv2.imread(rgb_image_path).copy()
     rgb_image_view = cv2.circle(
@@ -357,27 +357,30 @@ class MeshTransformer(torch.nn.Module):
         #self.translate = torch.nn.Parameter(torch.tensor([[0.0, 0.0, 0.0]]).to(self.meshes.device), requires_grad=True)
         #self.rotate_6d = matrix_to_rotation_6d(torch.eye(3).reshape(1, 3, 3)).float()
         #self.rotate_6d = torch.nn.Parameter(self.rotate_6d.to(self.meshes.device), requires_grad=True)
-        self.rotate_6d = torch.nn.Parameter(matrix_to_rotation_6d(initial_rotation).clone().float().to(self.device), requires_grad=True)
-        self.translate = torch.nn.Parameter(initial_translation.clone().float().to(self.device), requires_grad=True)
+        self.rotate_6d = torch.nn.Parameter(matrix_to_rotation_6d(initial_rotation).clone().float().to(self.device), requires_grad=False)
+        parameter_translation = torch.zeros((1, 3), dtype=torch.float32).to(self.device)
+        parameter_translation[0] = initial_translation[0, :3]
+        self.translate = torch.nn.Parameter(parameter_translation.clone().float().to(self.device), requires_grad=False)
         #self.rotate = torch.nn.Parameter(torch.tensor([[0., 0., 0.]]).to(self.meshes.device), requires_grad=True)
         #self.rotate = torch.nn.Parameter(torch.eye(3).reshape(1, 3, 3).to(self.meshes.device), requires_grad=True)
     
-        #self.initial_correction_transformation(initial_translation, initial_rotation)
+        self.initial_correction_transformation(initial_translation, None)
     
     def initial_correction_transformation(self, initial_translation, initial_rotation):
         
         #Orient the object upside down to reduce rotation parameter stress
         #angles = np.deg2rad([90, 180, 0])
         #initial_rotation = euler_angles_to_matrix(torch.from_numpy(angles).reshape(1, 3), "XYZ").to(self.meshes.device)
-        transformed_verts = Transform3d().rotate(initial_rotation).to(self.meshes.device).transform_points(self.meshes.verts_padded())
-        self.meshes = self.meshes.update_padded(transformed_verts)
+        if initial_rotation is not None:
+            transformed_verts = Transform3d().rotate(initial_rotation).to(self.meshes.device).transform_points(self.meshes.verts_padded())
+            self.meshes = self.meshes.update_padded(transformed_verts)
         
         # angles = np.deg2rad([0, 180, 0])
         # initial_rotation = euler_angles_to_matrix(torch.from_numpy(angles).reshape(1, 3), "XYZ").to(self.meshes.device)
         # transformed_verts = Transform3d().rotate(initial_rotation).to(self.meshes.device).transform_points(self.meshes.verts_padded())
         # self.meshes = self.meshes.update_padded(transformed_verts)
 
-        transformed_verts = Transform3d().translate(torch.from_numpy(initial_translation).reshape(1, 3)).to(self.meshes.device).transform_points(self.meshes.verts_padded())
+        transformed_verts = Transform3d().translate(initial_translation).to(self.meshes.device).transform_points(self.meshes.verts_padded())
         self.meshes = self.meshes.update_padded(transformed_verts)
         #transformed_verts = Transform3d().translate(-1.*torch.tensor(cam_eye).to(self.meshes.device)).to(self.meshes.device).transform_points(self.meshes.verts_padded())
         #self.meshes = self.meshes.update_padded(transformed_verts)
@@ -398,7 +401,7 @@ class MeshTransformer(torch.nn.Module):
         #transform3d = Transform3d(matrix=self.transformation_matrix, device=self.meshes.device
         meshes = self.meshes.clone()
         rotation_mat = rotation_6d_to_matrix(self.rotate_6d).to(self.meshes.device)
-        
+        #translate = torch.tensor([*self.translate.flatten(), 0.0]).float().to(self.device).reshape(1, 3)
         transformed_verts = Transform3d().rotate(rotation_mat).translate(self.translate).scale(self.scale).to(self.meshes.device).transform_points(meshes.verts_padded())
         #transformed_verts = Transform3d().scale(self.scale).to(self.meshes.device).transform_points(meshes.verts_padded())
         meshes = meshes.update_padded(transformed_verts)
