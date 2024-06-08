@@ -53,7 +53,7 @@ else:
 
 # Assuming camera intrinsics matrix 'K' and pose matrix 'pose' are given
 # Example camera intrinsics and pose (adjust according to your data)
-root_folder_path = "../demo_data/cup_rescan_anchor_gripper"
+root_folder_path = "../demo_data/penguin_scan_anchor_gripper"
 intrinsic_path = osp.join(root_folder_path, "cam_K.txt")
 
 K_3x3 = np.loadtxt(intrinsic_path).astype(np.double)  # fx, fy, cx, cy should be provided
@@ -162,7 +162,7 @@ def close_writers():
 
 atexit.register(close_writers)
 
-angles = np.deg2rad([90, 180, 0])
+angles = np.deg2rad([90, 0, 0])
 initial_rotation = euler_angles_to_matrix(torch.from_numpy(angles).reshape(1, 3), "XYZ").to(device).float()
 #initial_translation = torch.from_numpy(initial_translation).float().reshape(1, 3).to(device)
 transformer = MeshTransformer(meshes, renderer_silhouette, renderer, cameras, lights, target_rgb, initial_translation, initial_rotation).to(device)
@@ -216,7 +216,6 @@ with torch.no_grad():
         #transformer = MeshTransformer(meshes, renderer_silhouette, renderer, cameras, lights, target_rgb, T_init, R_init).to(device)
 
 #cv2.namedWindow("Training")
-
 reg_loss_weight = 10.0
 min_allowable_scale = compute_bounding_box_size(tgt_points.squeeze(0)) / compute_bounding_box_size(predicted_points.squeeze(0))
 min_allowable_scale += 0.02
@@ -277,8 +276,8 @@ with tqdm(total=num_iterations) as pbar:
         image_show = np.hstack([image_[..., ::-1], target_rgb_show_, overlaid_image])
         writer_sil.append_data(image_sil)
         writer_rgb.append_data(image_show[..., ::-1])
-        # cv2.imshow("Training", image_show)
-        # cv2.waitKey(1)
+        #cv2.imshow("Training", image_show)
+        #cv2.waitKey(1)
         
         pbar.set_description(f"iteration {i + 1}, loss {loss.item():.2f}, scale {scale:.2f}, {reg_loss.item():.2f}")
         pbar.update(1)
@@ -335,7 +334,7 @@ with tqdm(total=num_iterations) as pbar:
             
 #             cv2.imwrite("render.png", image_show)
 #             #break
-# #cv2.destroyAllWindows()
+# cv2.destroyAllWindows()
 # #swa_model.update_parameters(transformer)
 print(f"Min loss {min_loss}, scale {good_scale}, best_iter {best_iter}")
 
